@@ -1,20 +1,21 @@
 """Zeichnet den Spielzustand mit pygame -- die "Optik" des Spiels.
 
 Der Renderer kennt die Spielregeln NICHT. Er bekommt nur ein fertiges SnakeGame
-(den Zustand) und malt es huebsch auf den Bildschirm. Dadurch koennte man dasselbe
-Spiel spaeter auch voellig anders darstellen (oder gar nicht -- fuer die KI).
+(den Zustand) und malt es huebsch. Dadurch koennte man dasselbe Spiel spaeter
+voellig anders darstellen (oder gar nicht -- fuer das schnelle KI-Training).
 
-Enthaelt:
-- ein dezentes Schachbrett-Spielfeld
-- die Schlange mit Farbverlauf (Kopf hell -> Schwanz dunkel) und Augen
-- apfelartige Fruechte mit Glanzpunkt, Blatt und weichem Schimmer
-- eine Kopfzeile mit Punkten / Laenge / Bestwert
-- Overlays fuer Pause und Game Over
+Optik-Merkmale:
+- fluessige Bewegung durch Interpolation zwischen zwei Spielschritten
+  (die Schlange GLEITET, statt von Zelle zu Zelle zu springen)
+- weiche, anti-aliaste Kanten (gfxdraw) fuer Aepfel und Schlangenkoerper
+- die Schlange als zusammenhaengende Roehre mit Farbverlauf und Augen
+- moderne Schrift (Poppins) und ein Text-Cache fuer gute Performance
 """
 
 from __future__ import annotations
 
 import pygame
+import pygame.gfxdraw as gfxdraw
 
 from .config import (
     CELL_SIZE,
@@ -25,21 +26,26 @@ from .config import (
     Palette,
 )
 from .fonts import Font, load_font
-from .snake_game import Direction, SnakeGame
+from .snake_game import SnakeGame
+
+# Breite des Schlangenkoerpers relativ zur Zelle (laesst einen kleinen Rand frei).
+BODY_WIDTH = int(CELL_SIZE * 0.76)
+BODY_RADIUS = BODY_WIDTH // 2
 
 
-def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float):
-    """Mischt zwei Farben. t=0 -> c1, t=1 -> c2, dazwischen linear interpoliert.
-
-    Wird fuer den Farbverlauf der Schlange benutzt (Kopf -> Schwanz).
-    """
+def _lerp_color(c1, c2, t: float):
+    """Mischt zwei Farben. t=0 -> c1, t=1 -> c2."""
     t = max(0.0, min(1.0, t))
     return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
 
 
-def _best_font(size: int, bold: bool = False) -> Font:
-    """Laedt eine Schrift in gewuenschter Groesse (siehe game/fonts.py, warum so)."""
-    return load_font(size, bold=bold)
+def _fill_circle(surface: pygame.Surface, x: float, y: float, r: float, color) -> None:
+    """Gefuellter Kreis mit weicher (anti-aliaster) Kante."""
+    if r < 1:
+        return
+    xi, yi, ri = int(x), int(y), int(r)
+    gfxdraw.filled_circle(surface, xi, yi, ri, color)
+    gfxdraw.aacircle(surface, xi, yi, ri, color)
 
 
 class Renderer:
@@ -48,31 +54,35 @@ class Renderer:
     def __init__(self, surface: pygame.Surface) -> None:
         self.surface = surface
 
-        # Schriften einmalig laden (das ist vergleichsweise teuer).
-        self.font_tiny = _best_font(16)
-        self.font_small = _best_font(19)
-        self.font_label = _best_font(15, bold=True)
-        self.font_medium = _best_font(24, bold=True)
-        self.font_score = _best_font(40, bold=True)
-        self.font_large = _best_font(38, bold=True)
-        self.font_title = _best_font(66, bold=True)
+        # Schriften einmalig laden (verschiedene Groessen/Schnitte).
+        self.f_title = load_font(64, "semibold")
+        self.f_h2 = load_font(30, "semibold")
+        self.f_stat = load_font(34, "semibold")
+        self.f_body = load_font(21, "medium")
+        self.f_body_reg = load_font(19, "regular")
+        self.f_label = load_font(13, "semibold")
+        self.f_small = load_font(16, "regular")
+        self.f_tiny = load_font(14, "regular")
 
-        # Statischen Feld-Hintergrund (Schachbrett) einmal vorzeichnen ->
-        # spart Rechenzeit, weil er sich nie aendert.
+        # Statischen Feld-Hintergrund (Schachbrett) einmal vorzeichnen.
         self._board_bg = self._build_board_background()
-
         # Weichen Schimmer fuer die Fruechte einmalig vorbereiten.
         self._fruit_glow = self._build_fruit_glow()
+        # Wiederverwendbarer dunkler Schleier fuer Overlays.
+        self._veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+
+        # Kleiner Cache fuer gerenderten Text (spart Rechenzeit pro Frame).
+        self._text_cache: dict[tuple, pygame.Surface] = {}
 
     # ------------------------------------------------------------------ #
     # Vorberechnete Flaechen
     # ------------------------------------------------------------------ #
     def _build_board_background(self) -> pygame.Surface:
-        """Erzeugt das Schachbrettmuster des Spielfelds als eigene Flaeche."""
+        """Erzeugt das dezente Schachbrettmuster des Spielfelds."""
         bg = pygame.Surface((WINDOW_WIDTH, PLAY_HEIGHT))
         bg.fill(Palette.BOARD_A)
-        cols = WINDOW_WIDTH // CELL_SIZE
-        rows = PLAY_HEIGHT // CELL_SIZE
+        cols = WINDOW_WIDTH // CELL_SIZE + 1
+        rows = PLAY_HEIGHT // CELL_SIZE + 1
         for x in range(cols):
             for y in range(rows):
                 if (x + y) % 2 == 1:
@@ -85,278 +95,259 @@ class Renderer:
         size = CELL_SIZE * 2
         glow = pygame.Surface((size, size), pygame.SRCALPHA)
         center = size // 2
-        # Mehrere konzentrische Kreise mit abnehmender Deckkraft = weicher Verlauf.
         for radius in range(center, 0, -1):
-            alpha = int(70 * (1 - radius / center))
-            color = (*Palette.FRUIT_GLOW, alpha)
-            pygame.draw.circle(glow, color, (center, center), radius)
+            alpha = int(60 * (1 - radius / center) ** 2)
+            gfxdraw.filled_circle(
+                glow, center, center, radius, (*Palette.FRUIT_GLOW, alpha)
+            )
         return glow
 
     # ------------------------------------------------------------------ #
-    # Koordinaten-Hilfen
+    # Text-Cache
+    # ------------------------------------------------------------------ #
+    def _text(self, font: Font, text: str, color) -> pygame.Surface:
+        """Rendert Text (gecacht), damit gleiche Texte nicht jeden Frame neu entstehen."""
+        key = (id(font), text, color)
+        surf = self._text_cache.get(key)
+        if surf is None:
+            if len(self._text_cache) > 400:
+                self._text_cache.clear()
+            surf = font.render(text, color)
+            self._text_cache[key] = surf
+        return surf
+
+    def _blit_centered(self, font, text, color, cx, cy) -> None:
+        surf = self._text(font, text, color)
+        self.surface.blit(surf, surf.get_rect(center=(cx, cy)))
+
+    # ------------------------------------------------------------------ #
+    # Koordinaten-Hilfe
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _cell_rect(x: int, y: int) -> pygame.Rect:
-        """Rechnet eine Gitterzelle (Spalte, Zeile) in ein Pixel-Rechteck um.
-
-        Wichtig: Das Spielfeld liegt UNTER der Kopfzeile, daher + HEADER_HEIGHT.
-        """
-        return pygame.Rect(
-            x * CELL_SIZE,
-            HEADER_HEIGHT + y * CELL_SIZE,
-            CELL_SIZE,
-            CELL_SIZE,
-        )
+    def _cell_center(x: float, y: float) -> tuple[float, float]:
+        """Pixel-Mittelpunkt einer (evtl. gebrochenen) Gitterposition."""
+        px = x * CELL_SIZE + CELL_SIZE / 2
+        py = HEADER_HEIGHT + y * CELL_SIZE + CELL_SIZE / 2
+        return px, py
 
     # ------------------------------------------------------------------ #
     # Hauptzeichen-Routine
     # ------------------------------------------------------------------ #
-    def draw(self, game: SnakeGame, speed_name: str, high_score: int) -> None:
-        """Zeichnet einen kompletten Frame des laufenden Spiels."""
+    def draw(self, game, speed_name, high_score, prev_snake=None, alpha=1.0) -> None:
+        """Zeichnet einen kompletten Frame des laufenden Spiels.
+
+        prev_snake/alpha steuern die fluessige Bewegung: alpha=0 zeigt die
+        Schlange an ihrer vorherigen Position, alpha=1 an der aktuellen; dazwischen
+        gleitet sie. Sind keine Werte gegeben, wird ohne Interpolation gezeichnet.
+        """
         self.surface.fill(Palette.BG)
         self.surface.blit(self._board_bg, (0, HEADER_HEIGHT))
         self._draw_fruits(game)
-        self._draw_snake(game)
+        self._draw_snake(game, prev_snake, alpha)
         self._draw_header(game, speed_name, high_score)
 
     # ------------------------------------------------------------------ #
-    # Fruechte
+    # Fruechte (Aepfel)
     # ------------------------------------------------------------------ #
-    def _draw_fruits(self, game: SnakeGame) -> None:
+    def _draw_fruits(self, game) -> None:
+        radius = CELL_SIZE // 2 - 4
         for (x, y) in game.fruits:
-            rect = self._cell_rect(x, y)
-            cx, cy = rect.center
+            cx, cy = self._cell_center(x, y)
+            cx, cy = int(cx), int(cy)
 
-            # 1) Weicher Schein hinter der Frucht.
-            glow_rect = self._fruit_glow.get_rect(center=(cx, cy))
-            self.surface.blit(self._fruit_glow, glow_rect)
-
-            # 2) Der Apfel (roter Kreis).
-            radius = CELL_SIZE // 2 - 4
-            pygame.draw.circle(self.surface, Palette.FRUIT, (cx, cy), radius)
-
-            # 3) Kleiner Glanzpunkt oben links -> wirkt runder/glaenzend.
-            hl_r = max(2, radius // 3)
-            pygame.draw.circle(
-                self.surface,
-                Palette.FRUIT_HIGHLIGHT,
-                (cx - radius // 3, cy - radius // 3),
-                hl_r,
-            )
-
-            # 4) Kleines Blatt oben.
+            # 1) weicher Schein
+            self.surface.blit(self._fruit_glow, self._fruit_glow.get_rect(center=(cx, cy)))
+            # 2) Apfel (weiche Kante)
+            _fill_circle(self.surface, cx, cy, radius, Palette.FRUIT)
+            # 3) Glanzpunkt
+            _fill_circle(self.surface, cx - radius // 3, cy - radius // 3,
+                         max(2, radius // 3), Palette.FRUIT_HIGHLIGHT)
+            # 4) kleines Blatt
             leaf = pygame.Rect(0, 0, radius, radius // 2)
-            leaf.center = (cx + radius // 4, cy - radius)
+            leaf.center = (cx + radius // 4, cy - radius + 1)
             pygame.draw.ellipse(self.surface, Palette.FRUIT_LEAF, leaf)
 
     # ------------------------------------------------------------------ #
-    # Schlange
+    # Schlange (fluessige, zusammenhaengende Roehre)
     # ------------------------------------------------------------------ #
-    def _draw_snake(self, game: SnakeGame) -> None:
-        segments = game.snake
-        n = len(segments)
+    def _draw_snake(self, game, prev_snake, alpha) -> None:
+        curr = game.snake
+        n = len(curr)
+        centers = self._interp_centers(prev_snake, curr, alpha)
 
-        # Von hinten nach vorne zeichnen, damit der Kopf oben liegt.
+        # Von hinten (Schwanz) nach vorne (Kopf) zeichnen -> Kopf liegt oben.
         for i in range(n - 1, -1, -1):
-            x, y = segments[i]
-            rect = self._cell_rect(x, y)
+            color = self._snake_color(i, n)
+            cx, cy = centers[i]
 
-            if i == 0:
-                # Kopf: volle Zellengroesse, hellste Farbe.
-                self._draw_head(game, rect)
+            # Verbindungsstueck zum vorderen Nachbarn fuellt die Luecke -> Roehre.
+            if i > 0:
+                px, py = centers[i - 1]
+                if abs(px - cx) <= 1.5 * CELL_SIZE and abs(py - cy) <= 1.5 * CELL_SIZE:
+                    pygame.draw.line(self.surface, color, (px, py), (cx, cy), BODY_WIDTH)
+
+            _fill_circle(self.surface, cx, cy, BODY_RADIUS, color)
+
+        # Augen zuletzt oben auf den Kopf.
+        if n:
+            self._draw_eyes(game, centers[0])
+
+    def _interp_centers(self, prev_snake, curr, alpha):
+        """Berechnet fuer jedes aktuelle Segment den (interpolierten) Pixel-Mittelpunkt."""
+        centers = []
+        prev = prev_snake or []
+        lp = len(prev)
+        for i, (cx, cy) in enumerate(curr):
+            # Wo war dieses Segment im vorigen Schritt? (neu gewachsene bleiben stehen)
+            fx, fy = prev[i] if i < lp else (cx, cy)
+            # Bei Wand-Durchgang springt ein Segment ueber den ganzen Bildschirm ->
+            # dann NICHT interpolieren, sonst wuerde es quer durchs Feld gleiten.
+            if abs(cx - fx) > 1 or abs(cy - fy) > 1:
+                ix, iy = cx, cy
             else:
-                # Koerper: Farbverlauf ueber die Laenge + leichter Einzug,
-                # damit die Segmente sichtbar getrennt wirken.
-                t = (i - 1) / max(1, n - 2)  # 0 direkt hinter dem Kopf ... 1 am Schwanz
-                color = _lerp_color(Palette.SNAKE_BODY, Palette.SNAKE_TAIL, t)
-                inset = 2 if i < n - 1 else 4  # Schwanz etwas schmaler -> "spitzer"
-                body = rect.inflate(-inset * 2, -inset * 2)
-                pygame.draw.rect(self.surface, color, body, border_radius=9)
+                ix = fx + (cx - fx) * alpha
+                iy = fy + (cy - fy) * alpha
+            centers.append(self._cell_center(ix, iy))
+        return centers
 
-    def _draw_head(self, game: SnakeGame, rect: pygame.Rect) -> None:
-        """Zeichnet den Kopf inkl. zweier Augen, die in Bewegungsrichtung schauen."""
-        head = rect.inflate(-4, -4)
-        pygame.draw.rect(self.surface, Palette.SNAKE_HEAD, head, border_radius=11)
+    @staticmethod
+    def _snake_color(i: int, n: int):
+        """Farbverlauf: Kopf hell, Koerper mittel, Schwanz dunkel."""
+        if i == 0:
+            return Palette.SNAKE_HEAD
+        t = (i - 1) / max(1, n - 2)
+        return _lerp_color(Palette.SNAKE_BODY, Palette.SNAKE_TAIL, t)
 
-        # Augenposition abhaengig von der Blickrichtung bestimmen.
+    def _draw_eyes(self, game, head_center) -> None:
+        """Zwei Augen, die in Blickrichtung schauen (mit kleinem Glanzpunkt)."""
+        cx, cy = head_center
         dx, dy = game.direction.value
-        cx, cy = rect.center
-        eye_r = max(2, CELL_SIZE // 9)
-        offset = CELL_SIZE // 5  # Abstand der Augen von der Mitte
+        # senkrecht zur Blickrichtung (fuer den seitlichen Augenabstand)
+        sx, sy = -dy, dx
+        fwd = CELL_SIZE * 0.14
+        side = CELL_SIZE * 0.17
+        eye_r = max(2.0, CELL_SIZE * 0.11)
 
-        if dx != 0:  # horizontal -> Augen uebereinander, nach vorne versetzt
-            ex = cx + dx * offset
-            eyes = [(ex, cy - offset), (ex, cy + offset)]
-        else:        # vertikal -> Augen nebeneinander, nach vorne versetzt
-            ey = cy + dy * offset
-            eyes = [(cx - offset, ey), (cx + offset, ey)]
-
-        for (ex, ey) in eyes:
-            pygame.draw.circle(self.surface, Palette.SNAKE_EYE, (ex, ey), eye_r)
+        for s in (+1, -1):
+            ex = cx + dx * fwd + sx * side * s
+            ey = cy + dy * fwd + sy * side * s
+            _fill_circle(self.surface, ex, ey, eye_r, Palette.SNAKE_EYE)
+            _fill_circle(self.surface, ex + dx * 1.2, ey + dy * 1.2,
+                         max(1.0, eye_r * 0.4), (235, 240, 245))
 
     # ------------------------------------------------------------------ #
     # Kopfzeile (Score / Laenge / Bestwert)
     # ------------------------------------------------------------------ #
-    def _draw_header(self, game: SnakeGame, speed_name: str, high_score: int) -> None:
-        # Hintergrund + feine Trennlinie zum Spielfeld.
-        header_rect = pygame.Rect(0, 0, WINDOW_WIDTH, HEADER_HEIGHT)
-        pygame.draw.rect(self.surface, Palette.HEADER_BG, header_rect)
-        pygame.draw.line(
-            self.surface, Palette.BORDER,
-            (0, HEADER_HEIGHT - 1), (WINDOW_WIDTH, HEADER_HEIGHT - 1), 2,
-        )
+    def _draw_header(self, game, speed_name, high_score) -> None:
+        pygame.draw.rect(self.surface, Palette.HEADER_BG,
+                         pygame.Rect(0, 0, WINDOW_WIDTH, HEADER_HEIGHT))
+        pygame.draw.line(self.surface, Palette.BORDER,
+                         (0, HEADER_HEIGHT - 1), (WINDOW_WIDTH, HEADER_HEIGHT - 1), 2)
 
-        # Drei Info-Bloecke gleichmaessig verteilt.
         third = WINDOW_WIDTH // 3
         self._draw_stat(third * 0 + third // 2, "PUNKTE", str(game.score), Palette.ACCENT)
-        self._draw_stat(third * 1 + third // 2, "LAENGE", str(game.length), Palette.TEXT)
+        self._draw_stat(third * 1 + third // 2, "LÄNGE", str(game.length), Palette.TEXT)
         self._draw_stat(third * 2 + third // 2, "BEST", str(high_score), Palette.TEXT_DIM)
 
-        # Kleiner Geschwindigkeits-Hinweis oben links.
-        speed_surf = self.font_tiny.render(f"Tempo: {speed_name}", True, Palette.TEXT_DIM)
-        self.surface.blit(speed_surf, (14, 10))
-
-    def _draw_stat(self, center_x: int, label: str, value: str, value_color) -> None:
-        """Zeichnet einen Info-Block: kleines Label oben, grosse Zahl darunter."""
-        label_surf = self.font_label.render(label, True, Palette.TEXT_DIM)
-        value_surf = self.font_score.render(value, True, value_color)
-
-        label_rect = label_surf.get_rect(center=(center_x, 34))
-        value_rect = value_surf.get_rect(center=(center_x, 64))
-        self.surface.blit(label_surf, label_rect)
-        self.surface.blit(value_surf, value_rect)
+    def _draw_stat(self, center_x, label, value, value_color) -> None:
+        self._blit_centered(self.f_label, label, Palette.TEXT_DIM, center_x, 34)
+        self._blit_centered(self.f_stat, value, value_color, center_x, 63)
 
     # ------------------------------------------------------------------ #
-    # Overlays (halbtransparent ueber dem Spiel)
+    # Overlays
     # ------------------------------------------------------------------ #
     def _dim_screen(self, alpha: int = 190) -> None:
-        """Legt einen halbtransparenten dunklen Schleier ueber das ganze Fenster."""
-        veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        veil.fill((*Palette.OVERLAY, alpha))
-        self.surface.blit(veil, (0, 0))
+        self._veil.fill((*Palette.OVERLAY, alpha))
+        self.surface.blit(self._veil, (0, 0))
 
     def draw_pause_overlay(self) -> None:
         self._dim_screen(150)
-        self._centered_text("PAUSE", self.font_title, Palette.TEXT, WINDOW_HEIGHT // 2 - 30)
-        self._centered_text(
-            "Leertaste = weiter    Esc = Menue",
-            self.font_small, Palette.TEXT_DIM, WINDOW_HEIGHT // 2 + 30,
-        )
+        cx = WINDOW_WIDTH // 2
+        self._blit_centered(self.f_title, "Pause", Palette.TEXT, cx, WINDOW_HEIGHT // 2 - 26)
+        self._blit_centered(self.f_small, "Leertaste = weiter      Esc = Menü",
+                            Palette.TEXT_DIM, cx, WINDOW_HEIGHT // 2 + 34)
 
-    def draw_game_over_overlay(self, score: int, high_score: int, is_new_best: bool) -> None:
-        self._dim_screen(200)
-        cy = WINDOW_HEIGHT // 2
-
-        self._centered_text("GAME OVER", self.font_title, Palette.ACCENT_WARN, cy - 90)
-        self._centered_text(
-            f"Punkte: {score}", self.font_large, Palette.TEXT, cy - 12,
-        )
-
+    def draw_game_over_overlay(self, score, high_score, is_new_best) -> None:
+        self._dim_screen(205)
+        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
+        self._blit_centered(self.f_title, "Game Over", Palette.ACCENT_WARN, cx, cy - 88)
+        self._blit_centered(self.f_h2, f"{score} Punkte", Palette.TEXT, cx, cy - 20)
         if is_new_best:
-            self._centered_text(
-                "Neuer Bestwert!", self.font_medium, Palette.ACCENT, cy + 34,
-            )
+            self._blit_centered(self.f_body, "Neuer Bestwert!", Palette.ACCENT, cx, cy + 30)
         else:
-            self._centered_text(
-                f"Bestwert: {high_score}", self.font_small, Palette.TEXT_DIM, cy + 34,
-            )
+            self._blit_centered(self.f_small, f"Bestwert: {high_score}",
+                                Palette.TEXT_DIM, cx, cy + 28)
+        self._blit_centered(self.f_small, "Enter = nochmal      Esc = Menü",
+                            Palette.TEXT_DIM, cx, cy + 80)
 
-        self._centered_text(
-            "Enter = nochmal    Esc = Menue",
-            self.font_small, Palette.TEXT_DIM, cy + 86,
-        )
-
-    def draw_win_overlay(self, score: int) -> None:
-        self._dim_screen(200)
-        cy = WINDOW_HEIGHT // 2
-        self._centered_text("GEWONNEN!", self.font_title, Palette.ACCENT, cy - 70)
-        self._centered_text(
-            f"Feld gefuellt -- {score} Punkte", self.font_medium, Palette.TEXT, cy + 6,
-        )
-        self._centered_text(
-            "Enter = nochmal    Esc = Menue",
-            self.font_small, Palette.TEXT_DIM, cy + 60,
-        )
+    def draw_win_overlay(self, score) -> None:
+        self._dim_screen(205)
+        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
+        self._blit_centered(self.f_title, "Gewonnen!", Palette.ACCENT, cx, cy - 60)
+        self._blit_centered(self.f_h2, f"Feld gefüllt — {score} Punkte",
+                            Palette.TEXT, cx, cy + 6)
+        self._blit_centered(self.f_small, "Enter = nochmal      Esc = Menü",
+                            Palette.TEXT_DIM, cx, cy + 56)
 
     # ------------------------------------------------------------------ #
     # Startmenue / Einstellungen
     # ------------------------------------------------------------------ #
     def draw_menu(self, entries: list[tuple[str, str | None]], selected_index: int) -> None:
-        """Zeichnet das Startmenue.
-
-        entries ist eine Liste aus (Label, Wert). Ist Wert None, wird der Eintrag
-        als grosser START-Knopf gezeichnet. selected_index markiert die aktive Zeile.
-        """
         self.surface.fill(Palette.BG)
+        cx = WINDOW_WIDTH // 2
 
-        # Titel + Untertitel.
-        self._centered_text("SNAKE", self.font_title, Palette.ACCENT, 120)
-        self._centered_text(
-            "Klassisch  ·  Pfeiltasten oder WASD",
-            self.font_small, Palette.TEXT_DIM, 170,
-        )
+        self._blit_centered(self.f_title, "SNAKE", Palette.ACCENT, cx, 118)
+        self._blit_centered(self.f_small, "Klassisch  ·  Pfeiltasten oder WASD",
+                            Palette.TEXT_DIM, cx, 168)
 
-        # Zeilenblock vertikal etwa mittig anordnen.
-        panel_x = 60
+        panel_x = 64
         panel_w = WINDOW_WIDTH - 2 * panel_x
-        row_h = 56
-        gap = 12
+        row_h = 54
+        gap = 14
         start_y = 250
 
         for i, (label, value) in enumerate(entries):
             y = start_y + i * (row_h + gap)
             selected = (i == selected_index)
-
             if value is None:
-                self._draw_menu_button(label, panel_w, y, row_h, selected)
+                self._draw_menu_button(label, y, row_h, selected)
             else:
                 self._draw_menu_row(label, value, panel_x, panel_w, y, row_h, selected)
 
-        # Steuerungshinweis unten.
-        self._centered_text(
-            "Pfeil hoch/runter waehlen   ·   links/rechts aendern   ·   Enter start",
-            self.font_tiny, Palette.TEXT_DIM, WINDOW_HEIGHT - 34,
+        self._blit_centered(
+            self.f_tiny,
+            "Hoch / Runter  wählen      ·      Links / Rechts  ändern      ·      Enter  Start",
+            Palette.TEXT_DIM, cx, WINDOW_HEIGHT - 36,
         )
 
-    def _draw_menu_row(self, label, value, panel_x, panel_w, y, row_h, selected):
-        """Eine Einstellungszeile: Label links, Wert rechts (mit Pfeilen wenn aktiv)."""
+    def _draw_menu_row(self, label, value, panel_x, panel_w, y, row_h, selected) -> None:
         rect = pygame.Rect(panel_x, y, panel_w, row_h)
         if selected:
-            pygame.draw.rect(self.surface, (28, 40, 36), rect, border_radius=12)
-            pygame.draw.rect(self.surface, Palette.ACCENT, rect, width=2, border_radius=12)
+            pygame.draw.rect(self.surface, (26, 38, 34), rect, border_radius=14)
+            pygame.draw.rect(self.surface, Palette.ACCENT, rect, width=2, border_radius=14)
 
         label_color = Palette.TEXT if selected else Palette.TEXT_DIM
-        label_surf = self.font_medium.render(label, True, label_color)
-        self.surface.blit(
-            label_surf, label_surf.get_rect(midleft=(panel_x + 24, rect.centery))
-        )
+        label_surf = self._text(self.f_body, label, label_color)
+        self.surface.blit(label_surf, label_surf.get_rect(midleft=(panel_x + 26, rect.centery)))
 
-        value_text = f"<   {value}   >" if selected else value
         value_color = Palette.ACCENT if selected else Palette.TEXT
-        value_surf = self.font_medium.render(value_text, True, value_color)
-        self.surface.blit(
-            value_surf, value_surf.get_rect(midright=(panel_x + panel_w - 24, rect.centery))
-        )
+        value_surf = self._text(self.f_body, value, value_color)
+        vx = panel_x + panel_w - 26
+        self.surface.blit(value_surf, value_surf.get_rect(midright=(vx, rect.centery)))
+        if selected:
+            # dezente Pfeile links/rechts vom Wert
+            arrow_l = self._text(self.f_body, "‹", Palette.ACCENT)
+            arrow_r = self._text(self.f_body, "›", Palette.ACCENT)
+            vw = value_surf.get_width()
+            self.surface.blit(arrow_l, arrow_l.get_rect(midright=(vx - vw - 14, rect.centery)))
+            self.surface.blit(arrow_r, arrow_r.get_rect(midleft=(vx + 12, rect.centery)))
 
-    def _draw_menu_button(self, label, panel_w, y, row_h, selected):
-        """Der START-Knopf, mittig und deutlich hervorgehoben."""
-        btn_w = 240
-        rect = pygame.Rect(0, y, btn_w, row_h)
+    def _draw_menu_button(self, label, y, row_h, selected) -> None:
+        rect = pygame.Rect(0, y, 240, row_h)
         rect.centerx = WINDOW_WIDTH // 2
-
-        bg = Palette.ACCENT if selected else (32, 37, 52)
-        pygame.draw.rect(self.surface, bg, rect, border_radius=14)
+        bg = Palette.ACCENT if selected else (30, 35, 50)
+        pygame.draw.rect(self.surface, bg, rect, border_radius=16)
         if not selected:
-            pygame.draw.rect(self.surface, Palette.BORDER, rect, width=2, border_radius=14)
-
+            pygame.draw.rect(self.surface, Palette.BORDER, rect, width=2, border_radius=16)
         text_color = Palette.BG if selected else Palette.TEXT
-        text_surf = self.font_medium.render(label, True, text_color)
-        self.surface.blit(text_surf, text_surf.get_rect(center=rect.center))
-
-    # ------------------------------------------------------------------ #
-    # kleiner Text-Helfer
-    # ------------------------------------------------------------------ #
-    def _centered_text(self, text: str, font: Font, color, y: int) -> None:
-        surf = font.render(text, True, color)
-        rect = surf.get_rect(center=(WINDOW_WIDTH // 2, y))
-        self.surface.blit(surf, rect)
+        self._blit_centered(self.f_h2, label, text_color, rect.centerx, rect.centery)

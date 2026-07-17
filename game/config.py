@@ -45,7 +45,7 @@ class SpeedPreset:
 
 
 SPEED_PRESETS: list[SpeedPreset] = [
-    SpeedPreset("Gemuetlich", 6),
+    SpeedPreset("Gemütlich", 6),
     SpeedPreset("Normal", 9),
     SpeedPreset("Schnell", 13),
     SpeedPreset("Rasant", 18),
@@ -54,14 +54,14 @@ SPEED_PRESETS: list[SpeedPreset] = [
 DEFAULT_SPEED_INDEX = 1  # "Normal"
 
 
-# Auswahlmoeglichkeiten fuer die Anzahl gleichzeitig sichtbarer Fruechte.
-FRUIT_COUNT_OPTIONS: list[int] = [1, 2, 3, 4, 5]
+# Auswahlmoeglichkeiten fuer die Anzahl gleichzeitig sichtbarer Fruechte (1 bis 10).
+FRUIT_COUNT_OPTIONS: list[int] = list(range(1, 11))
 DEFAULT_FRUIT_INDEX = 0  # 1 Frucht
 
 
 # Wand-Modus: klassisch (Wand = Tod) oder Durchgang (Schlange kommt auf der
 # gegenueberliegenden Seite wieder heraus -- bekannter Snake-Variantenmodus).
-WALL_MODES: list[str] = ["Toedlich", "Durchgang"]
+WALL_MODES: list[str] = ["Tödlich", "Durchgang"]
 DEFAULT_WALL_INDEX = 0
 
 

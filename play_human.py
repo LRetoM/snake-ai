@@ -78,6 +78,8 @@ class App:
         self.game: SnakeGame | None = None
         self.move_interval_ms = 1000.0  # wird beim Start gesetzt
         self.move_accumulator = 0.0     # gesammelte Zeit fuer den naechsten Schritt
+        # Schlangen-Zustand VOR dem letzten Schritt -> fuer fluessige Interpolation.
+        self.prev_snake: list = []
 
         self.state = App.MENU
         self.is_new_best = False
@@ -173,6 +175,7 @@ class App:
         moves_per_second = SPEED_PRESETS[self.speed_index].moves_per_second
         self.move_interval_ms = 1000.0 / moves_per_second
         self.move_accumulator = 0.0
+        self.prev_snake = list(self.game.snake)
 
         self.is_new_best = False
         self.state = App.PLAYING
@@ -191,6 +194,7 @@ class App:
 
         while self.move_accumulator >= self.move_interval_ms:
             self.move_accumulator -= self.move_interval_ms
+            self.prev_snake = list(self.game.snake)  # Zustand vor dem Schritt merken
             result = self.game.step()
 
             if result.won:
@@ -213,7 +217,13 @@ class App:
         assert self.game is not None
         speed_name = SPEED_PRESETS[self.speed_index].name
         high = self._current_high_score()
-        self.renderer.draw(self.game, speed_name, high)
+
+        # Gleit-Fortschritt zwischen zwei Schritten (0..1) fuer fluessige Bewegung.
+        if self.state in (App.PLAYING, App.PAUSED):
+            alpha = min(1.0, self.move_accumulator / self.move_interval_ms)
+        else:
+            alpha = 1.0  # bei Game Over / Sieg steht die Schlange still
+        self.renderer.draw(self.game, speed_name, high, self.prev_snake, alpha)
 
         if self.state == App.PAUSED:
             self.renderer.draw_pause_overlay()
@@ -226,8 +236,8 @@ class App:
         """Baut die Zeilen des Menues aus der aktuellen Auswahl."""
         return [
             ("Geschwindigkeit", SPEED_PRESETS[self.speed_index].name),
-            ("Fruechte", str(FRUIT_COUNT_OPTIONS[self.fruit_index])),
-            ("Waende", WALL_MODES[self.wall_index]),
+            ("Früchte", str(FRUIT_COUNT_OPTIONS[self.fruit_index])),
+            ("Wände", WALL_MODES[self.wall_index]),
             ("START", None),
         ]
 
