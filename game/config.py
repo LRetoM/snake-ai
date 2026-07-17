@@ -50,6 +50,8 @@ SPEED_PRESETS: list[SpeedPreset] = [
     SpeedPreset("Schnell", 13),
     SpeedPreset("Rasant", 18),
     SpeedPreset("Wahnsinn", 26),
+    SpeedPreset("EXTREM", 40),
+    SpeedPreset("UNGEHEUERLICH", 60),
 ]
 DEFAULT_SPEED_INDEX = 1  # "Normal"
 
