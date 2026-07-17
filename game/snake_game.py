@@ -166,19 +166,22 @@ class SnakeGame:
     def change_direction(self, new_direction: Direction) -> None:
         """Legt die naechste Richtung fest (fuer menschliche Steuerung).
 
-        Die Richtung wird gepuffert und erst beim naechsten step() angewandt
-        (verhindert 180-Grad-Selbstmord: die Pruefung erfolgt gegen die aktuell
-        wirksame Richtung, nicht gegen einen erst geplanten Zug).
+        Es wird stets nur EIN Zug gepuffert; ein neuer Tastendruck ERSETZT einen
+        schon gepufferten Zug komplett. So zaehlt immer der zuletzt gedrueckte
+        gueltige Zug, ohne dass ein ueberholter aelterer Zug erst abgearbeitet
+        werden muesste (maximale Reaktionsschnelligkeit).
 
-        Ein neuer Tastendruck ERSETZT einen bereits gepufferten Zug vollstaendig.
-        Das ist bewusst so (nicht als Warteschlange von mehreren Zuegen), damit
-        die Steuerung maximal reaktionsschnell bleibt: Aendert der Spieler
-        innerhalb eines Schritts seine Meinung, zaehlt immer der zuletzt
-        gedrueckte gueltige Zug -- er muss nicht erst einen aelteren, ueberholten
-        Zug abwarten.
+        Wichtig fuer die Gueltigkeitspruefung: Die Referenzrichtung ist der
+        BEREITS gepufferte Zug (falls vorhanden), sonst die aktuelle Richtung.
+        Beispiel: Schlange faehrt nach oben, Spieler drueckt schnell hinter-
+        einander rechts, dann unten. "Rechts" wird gepuffert. "Unten" ist relativ
+        zu "oben" verboten (180-Grad), aber relativ zum bereits gewaehlten
+        "rechts" ein ganz normaler 90-Grad-Abbieger -- und muss deshalb erlaubt
+        sein. Wuerde man immer nur gegen die alte, noch aktive Richtung pruefen,
+        wuerde so ein zweiter schneller Tastendruck faelschlich verworfen.
         """
-        # Immer gegen die AKTUELLE (nicht eine gepufferte) Richtung pruefen.
-        if new_direction == self.direction or new_direction == self.direction.opposite:
+        reference = self._pending_turn if self._pending_turn is not None else self.direction
+        if new_direction == reference or new_direction == reference.opposite:
             return
         self._pending_turn = new_direction
 
