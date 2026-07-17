@@ -21,6 +21,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from enum import Enum
+from typing import Tuple
 
 
 class Direction(Enum):
@@ -76,7 +77,10 @@ def relative_turn(direction: "Direction", action: "Action") -> "Direction":
 
 
 # Eine Position auf dem Gitter: (spalte, zeile).
-Cell = tuple[int, int]
+# Bewusst typing.Tuple statt tuple[int, int]: das ist eine RUNTIME-Zuweisung
+# (kein reiner Typ-Hinweis), PEP-585-Generics (tuple[...]) gibt es erst ab
+# Python 3.9 -- PyPy3 basiert noch auf 3.7 und wuerde hier sonst crashen.
+Cell = Tuple[int, int]
 
 
 @dataclass
