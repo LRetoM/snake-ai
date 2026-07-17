@@ -65,13 +65,15 @@ def perceive(game: SnakeGame) -> np.ndarray:
 
     # --- 1) Gefahr geradeaus / rechts / links --------------------------------
     # Fuer jede der drei relativen Aktionen: Wohin kaeme der Kopf? Ist das toedlich?
-    # is_deadly() lebt im Spiel (dort liegen die Regeln) -- wir fragen nur ab.
-    danger = []
+    # danger_flags() lebt im Spiel (dort liegen die Regeln) -- wir fragen nur ab.
+    # Alle 3 Kandidatenzellen auf einmal abfragen (statt 3x is_deadly() einzeln)
+    # spart bei langen Schlangen spuerbar Zeit, siehe Kommentar dort.
+    candidate_cells = []
     for action in (Action.STRAIGHT, Action.RIGHT, Action.LEFT):
         move_dir = relative_turn(direction, action)
         dx, dy = move_dir.value
-        next_cell = (head_x + dx, head_y + dy)
-        danger.append(1.0 if game.is_deadly(next_cell) else 0.0)
+        candidate_cells.append((head_x + dx, head_y + dy))
+    danger = [1.0 if flag else 0.0 for flag in game.danger_flags(candidate_cells)]
 
     # --- 2) Aktuelle Blickrichtung (one-hot) ---------------------------------
     dir_up = 1.0 if direction == Direction.UP else 0.0

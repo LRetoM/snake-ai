@@ -155,6 +155,12 @@ class SnakeGame:
             (mid_x - 1, mid_y),
             (mid_x - 2, mid_y),
         ]
+        # Persistentes Koerper-Set, synchron zu self.snake gehalten (siehe step()).
+        # Performance-Grund: set(self.snake) bei jedem Zug/jeder Wahrnehmungs-
+        # abfrage neu zu bauen kostet O(Laenge) -- bei langen (= erfolgreichen!)
+        # Schlangen und tausenden Zuegen pro Sekunde im KI-Training summiert sich
+        # das spuerbar. Inkrementell pflegen (Kopf dazu, Schwanz weg) ist O(1).
+        self._occupied: set[Cell] = set(self.snake)
         self.direction = Direction.RIGHT
         self._turn_queue.clear()
 
@@ -249,19 +255,20 @@ class SnakeGame:
         # 4) Wird gefressen? Dann waechst die Schlange (Schwanz bleibt).
         will_eat = new_head in self.fruits
 
-        # 5) Selbstkollision pruefen.
+        # 5) Selbstkollision pruefen (gegen das persistente Koerper-Set, O(1)
+        #    statt eine Kopie von set(self.snake) zu bauen, siehe __init__).
         #    Wenn NICHT gefressen wird, rueckt der Schwanz eine Zelle weiter --
         #    die aktuelle Schwanzzelle wird also frei und darf betreten werden.
-        occupied = set(self.snake)
-        if not will_eat:
-            occupied.discard(self.snake[-1])
-        if new_head in occupied:
+        tail = self.snake[-1]
+        collision = new_head in self._occupied and not (not will_eat and new_head == tail)
+        if collision:
             self.alive = False
             self.death_cause = "self"
             return StepResult(False, False, False, self.score)
 
-        # 6) Bewegen: neuen Kopf vorne einfuegen.
+        # 6) Bewegen: neuen Kopf vorne einfuegen (Set synchron mitpflegen).
         self.snake.insert(0, new_head)
+        self._occupied.add(new_head)
 
         self.steps += 1
         ate_fruit = False
@@ -275,7 +282,13 @@ class SnakeGame:
             self._refill_fruits()
         else:
             # Nicht gefressen: Schwanzende entfernen -> Schlange bleibt gleich lang.
-            self.snake.pop()
+            old_tail = self.snake.pop()
+            # Sonderfall: Wenn der neue Kopf EXAKT die Zelle betritt, die der
+            # Schwanz gerade verlaesst (alter Schwanz == neuer Kopf), belegt der
+            # Kopf diese Zelle jetzt weiter -- NICHT aus dem Set entfernen, sonst
+            # wuerde eine tatsaechlich besetzte Zelle faelschlich als frei gelten.
+            if old_tail != new_head:
+                self._occupied.discard(old_tail)
             self.steps_since_fruit += 1
 
         # 7) Sieg? Wenn kein freies Feld mehr existiert, ist alles voll -> gewonnen.
@@ -295,7 +308,7 @@ class SnakeGame:
         auf einer bereits liegenden Frucht). Gibt es keine freie Zelle mehr, wird
         einfach keine gelegt (dann ist das Feld praktisch voll -> Sieg naht).
         """
-        blocked = set(self.snake) | self.fruits
+        blocked = self._occupied | self.fruits
         free_cells = [
             (x, y)
             for x in range(self.cols)
@@ -336,16 +349,34 @@ class SnakeGame:
         Schwanzende, das im naechsten Schritt sowieso wegrueckt). Die KI SIEHT
         damit nur "da vorne ist Gefahr" -- so wie ein Mensch die Wand sieht.
         Sie erfaehrt NICHT, was sie tun soll; das muss sie selbst lernen.
-        """
-        x, y = cell
-        if self.wrap_walls:
-            # Durchgang: eine Wand kann man nicht "treffen", man kommt hindurch.
-            cell = (x % self.cols, y % self.rows)
-        else:
-            if not (0 <= x < self.cols and 0 <= y < self.rows):
-                return True  # ausserhalb des Feldes = toedlich
 
-        # Koerper pruefen; das Schwanzende wird als frei behandelt (rueckt weg).
-        body = set(self.snake)
-        body.discard(self.snake[-1])
-        return cell in body
+        Fuer eine einzelne Zelle bequem, baut dafuer das Koerper-Set einmal.
+        Wer mehrere Zellen auf einmal prueft (z.B. perceive() mit 3 moeglichen
+        Zuegen), sollte stattdessen danger_flags() benutzen -- das baut das
+        Set nur EINMAL fuer alle Abfragen (siehe dort, wichtig fuer Performance
+        bei langen Schlangen).
+        """
+        return self.danger_flags([cell])[0]
+
+    def danger_flags(self, cells: list[Cell]) -> list[bool]:
+        """Wie is_deadly(), aber fuer mehrere Zellen auf einmal.
+
+        Performance-Grund: Nutzt das PERSISTENTE Koerper-Set (self._occupied,
+        siehe reset()/step()) statt bei jedem Aufruf eine Kopie von set(self.snake)
+        zu bauen -- das waere O(Laenge) und liefe bei perceive()'s 3 Kandidaten-
+        Zellen pro Zug sogar 3x auf. Hier ist jede Abfrage O(1).
+        """
+        tail = self.snake[-1]  # gilt als frei, es rueckt im naechsten Zug weg
+        occupied = self._occupied
+
+        flags = []
+        for (x, y) in cells:
+            if self.wrap_walls:
+                cell = (x % self.cols, y % self.rows)
+            elif not (0 <= x < self.cols and 0 <= y < self.rows):
+                flags.append(True)  # ausserhalb des Feldes = toedlich
+                continue
+            else:
+                cell = (x, y)
+            flags.append(cell != tail and cell in occupied)
+        return flags

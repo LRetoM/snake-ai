@@ -192,6 +192,11 @@ class EvolutionTrainer:
         n_total = self.cfg.population_size * k
         self.results = [None] * n_total
         self.efficiency_bonus = [0.0] * n_total
+        # Nur noch laufende Partien werden pro Zug angefasst (siehe step_generation).
+        # Schrumpft mit der Zeit -> spart Rechenzeit gerade dann, wenn nur noch
+        # wenige "Nachzuegler" (typischerweise die guten, lang ueberlebenden
+        # Genome) uebrig sind und der Rest der Population schon fertig ist.
+        self._active_indices: list[int] = list(range(n_total))
 
         for genome in self.population.genomes:
             policy = NumpyPolicy(genome, self.cfg.hidden)  # 1x pro Genom, fuer alle K Episoden geteilt
@@ -209,15 +214,20 @@ class EvolutionTrainer:
         Gibt True zurueck, wenn die ganze Generation fertig ist (alle Partien tot
         oder abgebrochen). Das Dashboard ruft dies im Takt der Anzeige-Geschwindig-
         keit auf und zeichnet dazwischen.
+
+        Performance: iteriert NUR ueber die noch aktiven Partien (self._active_
+        indices), nicht ueber alle N jeden Zug mit einem "continue" fuer die schon
+        fertigen. Bei grossen Populationen mit vielen frueh sterbenden Individuen
+        (typisch in fruehen Generationen) und wenigen lang ueberlebenden Nachzueglern
+        (typisch in spaeten Generationen) spart das viel wiederholtes Leerlaufen.
         """
         if not self.generation_active:
             return True
 
         cfg = self.cfg
-        all_done = True
-        for i, game in enumerate(self.games):
-            if self.dones[i]:
-                continue
+        still_active = []
+        for i in self._active_indices:
+            game = self.games[i]
 
             obs = perceive(game)
             action = self.policies[i].act(obs)
@@ -247,9 +257,10 @@ class EvolutionTrainer:
                 self.dones[i] = True
                 self.results[i] = self._make_result(game, self.efficiency_bonus[i])
             else:
-                all_done = False
+                still_active.append(i)
 
-        return all_done
+        self._active_indices = still_active
+        return not still_active
 
     def end_generation(self) -> GenerationStats:
         """Wertet die fertige Generation aus und zuechtet die naechste.
