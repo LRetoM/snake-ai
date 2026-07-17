@@ -1,23 +1,28 @@
-"""Live-Dashboard fuer das Neuroevolution-Training.
+"""Live-Dashboard fuer das Neuroevolution-Training -- reine Auswertungsansicht.
 
 Zeigt in Echtzeit:
-- ein RASTER vieler Schlangen der aktuellen Generation, die gleichzeitig spielen
-- ein STATISTIK-Panel (Generation, Score, Fitness, Todesursachen, Diversität)
-- eine LERNKURVE (Score-Entwicklung ueber die Generationen)
+- ein STATISTIK-Panel (Generation, Score, Fitness, Effizienz, Stagnation, Diversitaet)
+- die Todesursachen als Balken
+- eine grosse LERNKURVE (Score-Entwicklung ueber die Generationen)
+
+WICHTIG (bewusste Design-Entscheidung): Es gibt hier KEINE Animation einzelner
+Schlangen mehr. Das Training laeuft immer mit maximaler Rechengeschwindigkeit --
+ohne an eine Bildwiederholrate oder Zug-Geschwindigkeit gekoppelt zu sein. Wer
+zusehen will, wie ein trainiertes Netz WIRKLICH spielt (mit huebscher Grafik),
+nutzt watch_ai.py -- das laedt den gespeicherten Champion und zeigt ihn im
+normalen, schoenen Spielfenster. Hier im Trainingsfenster zaehlt nur: so viele
+Generationen wie moeglich pro Sekunde, mit klarer Auswertung, was gerade passiert.
 
 Steuerung waehrend des Trainings:
 - Leertaste : Pause / weiter
-- T         : Turbo an/aus (ohne Anzeige rechnen -> maximale Geschwindigkeit)
-- Pfeil hoch/runter : Anzeige-Geschwindigkeit der Schlangen
 - Esc       : zurueck ins Menue
 
-Das Dashboard "treibt" den Trainer (ai/evolution/train_evolution.py) Schritt fuer
-Schritt an und zeichnet dazwischen -- die Rechenlogik selbst enthaelt kein pygame.
+Das Dashboard "treibt" den Trainer (ai/evolution/train_evolution.py) in grossen
+Zeitbloecken an -- die Rechenlogik selbst enthaelt kein pygame.
 """
 
 from __future__ import annotations
 
-import math
 import time
 
 import pygame
@@ -28,15 +33,9 @@ from ai.network import DEFAULT_HIDDEN
 from ai.evolution.train_evolution import EvolutionConfig, EvolutionTrainer, GenerationStats
 
 # ----------------------------- Fenster-Layout ------------------------------ #
-WIN_W, WIN_H = 1180, 720
+WIN_W, WIN_H = 1100, 760
 HEADER_H = 60
-PAD = 16
-GRID_X = PAD
-GRID_Y = HEADER_H + PAD
-GRID_W = 690
-GRID_H = WIN_H - GRID_Y - PAD
-PANEL_X = GRID_X + GRID_W + PAD
-PANEL_W = WIN_W - PANEL_X - PAD
+PAD = 20
 
 # ------------------------- Einstellbare Presets ---------------------------- #
 POP_OPTIONS = [30, 50, 100, 150, 200, 300]
@@ -47,8 +46,6 @@ MUTATION_PRESETS = [
     ("Hoch", 0.10, 0.35),
 ]
 FRUIT_OPTIONS = list(range(1, 11))  # 1 bis 10, wie im Menschen-Spiel
-VISIBLE_OPTIONS = [12, 20, 30, 50, 80, 120]
-SPEED_LEVELS = [10, 20, 40, 80, 160, 320, 640, 1000]  # Zuege pro Sekunde in der Live-Ansicht
 
 # Bewertungs-Tiefe: wie viele unabhaengige Partien (mit je eigenem Zufalls-
 # Fruchtlayout) jedes Genom pro Generation spielt, bevor seine Fitness aus dem
@@ -61,8 +58,8 @@ EPISODES_PRESETS = [
     ("Robust (5x)", 5),
 ]
 # Elite-Anteil: so viele der besten Genome kommen JEDE Generation unveraendert
-# in die naechste Runde (siehe gruener Rahmen im Raster). Schuetzt davor, dass
-# ein bereits gefundenes gutes Genom durch Mutation/Zufall wieder verloren geht.
+# in die naechste Runde. Schuetzt davor, dass ein bereits gefundenes gutes
+# Genom durch Mutation/Zufall wieder verloren geht.
 ELITISM_PRESETS = [
     ("Wenig (2%)", 0.02),
     ("Mittel (5%)", 0.05),
@@ -70,14 +67,7 @@ ELITISM_PRESETS = [
 ]
 
 # ----------------------------- Extra-Farben -------------------------------- #
-MINI_BG = (22, 25, 35)
-SNAKE_HEAD = Palette.SNAKE_HEAD
-SNAKE_BODY = Palette.SNAKE_BODY
-FRUIT = Palette.FRUIT
-ALIVE_BORDER = (48, 60, 58)
-DEAD_BORDER = (60, 40, 44)
-ELITE_BORDER = Palette.ACCENT
-LEADER_BORDER = (250, 200, 90)  # aktuell fuehrende Schlange DIESER Generation (live)
+PANEL_BG = (22, 25, 35)
 CURVE_MEAN = Palette.ACCENT
 CURVE_BEST = (250, 200, 90)
 STAGNATION_OK = Palette.ACCENT
@@ -91,14 +81,14 @@ class Dashboard:
 
     def __init__(self) -> None:
         pygame.init()
-        pygame.display.set_caption("Snake — Neuroevolution Dashboard")
+        pygame.display.set_caption("Snake — Neuroevolution Training")
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
         self.clock = pygame.time.Clock()
 
         self.f_title = load_font(30, "semibold")
         self.f_h2 = load_font(20, "semibold")
         self.f_label = load_font(13, "semibold")
-        self.f_value = load_font(22, "semibold")
+        self.f_value = load_font(30, "semibold")
         self.f_body = load_font(16, "regular")
         self.f_small = load_font(14, "regular")
         self.f_tiny = load_font(11, "regular")
@@ -107,11 +97,10 @@ class Dashboard:
         self.pop_idx = 2       # 100
         self.mut_idx = 1       # Mittel
         self.fruit_idx = 0     # 1
-        self.visible_idx = 1   # 20
         self.episodes_idx = 1  # Ausgewogen (3x)
         self.elitism_idx = 1   # Mittel (5%)
         self.menu_row = 0
-        self._menu_row_count = 7  # 6 Einstellungen + START
+        self._menu_row_count = 6  # 5 Einstellungen + START
 
         self.state = Dashboard.MENU
         self.running = True
@@ -119,11 +108,7 @@ class Dashboard:
         # Trainingszustand (wird beim Start gesetzt).
         self.trainer: EvolutionTrainer | None = None
         self.cfg: EvolutionConfig | None = None
-        self.visible_count = 20
-        self.speed_idx = 2     # 40 Zuege/s
-        self.turbo = False
         self.paused = False
-        self.move_accum = 0.0
         self.last_stats: GenerationStats | None = None
         self.gen_times: list[float] = []
         self._last_gen_time = time.time()
@@ -133,10 +118,10 @@ class Dashboard:
     # ================================================================== #
     def run(self) -> None:
         while self.running:
-            dt = self.clock.tick(60)
+            self.clock.tick(60)
             self._handle_events()
             if self.state == Dashboard.RUNNING:
-                self._update(dt)
+                self._update()
                 self._draw_running()
             else:
                 self._draw_menu()
@@ -178,21 +163,13 @@ class Dashboard:
         elif self.menu_row == 2:
             self.fruit_idx = (self.fruit_idx + delta) % len(FRUIT_OPTIONS)
         elif self.menu_row == 3:
-            self.visible_idx = (self.visible_idx + delta) % len(VISIBLE_OPTIONS)
-        elif self.menu_row == 4:
             self.episodes_idx = (self.episodes_idx + delta) % len(EPISODES_PRESETS)
-        elif self.menu_row == 5:
+        elif self.menu_row == 4:
             self.elitism_idx = (self.elitism_idx + delta) % len(ELITISM_PRESETS)
 
     def _on_run_key(self, key: int) -> None:
         if key == pygame.K_SPACE:
             self.paused = not self.paused
-        elif key == pygame.K_t:
-            self.turbo = not self.turbo
-        elif key in (pygame.K_UP, pygame.K_KP_PLUS, pygame.K_PLUS):
-            self.speed_idx = min(self.speed_idx + 1, len(SPEED_LEVELS) - 1)
-        elif key in (pygame.K_DOWN, pygame.K_KP_MINUS, pygame.K_MINUS):
-            self.speed_idx = max(self.speed_idx - 1, 0)
         elif key == pygame.K_ESCAPE:
             self.state = Dashboard.MENU
 
@@ -213,12 +190,9 @@ class Dashboard:
             fruit_count=FRUIT_OPTIONS[self.fruit_idx],
             episodes_per_genome=EPISODES_PRESETS[self.episodes_idx][1],
         )
-        self.visible_count = min(VISIBLE_OPTIONS[self.visible_idx], self.cfg.population_size)
         self.trainer = EvolutionTrainer(self.cfg, log_to_csv=True)
         self.trainer.begin_generation()
-        self.turbo = False
         self.paused = False
-        self.move_accum = 0.0
         self.last_stats = None
         self.gen_times = []
         self._last_gen_time = time.time()
@@ -232,49 +206,28 @@ class Dashboard:
         self.gen_times = self.gen_times[-20:]
 
     # ================================================================== #
-    # Training vorantreiben
+    # Training vorantreiben -- IMMER mit maximaler Rechengeschwindigkeit
     # ================================================================== #
-    def _update(self, dt: int) -> None:
+    def _update(self) -> None:
+        """Rechnet so viele Generationen wie in ein Zeitbudget passen.
+
+        Keine Kopplung an eine Zug-Geschwindigkeit oder Bildwiederholrate mehr
+        (es gibt ja nichts mehr zu animieren) -- nur ein kleines Zeitbudget pro
+        Frame, damit das Fenster weiterhin auf Leertaste/Esc reagiert, waehrend
+        im Hintergrund mit voller Geschwindigkeit gerechnet wird.
+        """
         if self.paused or self.trainer is None:
             return
 
-        if self.turbo:
-            # Reines Zeitbudget, keine Zeichnung dazwischen -> nutzt die volle
-            # Rechenleistung. Groesseres Budget als 1 Bildschirm-Frame ist hier
-            # bewusst OK (es wird ja nur ein statischer Platzhalter gezeichnet,
-            # 60 FPS sind fuer diesen Screen irrelevant) -- das reduziert den
-            # Python-Overhead durch haeufiges Umschalten zwischen Rechnen/Zeichnen.
-            budget = 0.1
-            t0 = time.perf_counter()
-            while time.perf_counter() - t0 < budget:
-                if self.trainer.generation_active:
-                    while not self.trainer.step_generation():
-                        pass
-                    self._on_generation_end()
-                else:
-                    self.trainer.begin_generation()
-        else:
-            # WICHTIG gegen Ruckeln: die Zug-Berechnung ist durch ein echtes
-            # ZEITBUDGET begrenzt (nicht durch eine feste Anzahl Zuege). Bei
-            # grosser Population/Bewertungstiefe kann ein einzelner Zug fuer die
-            # GESAMTE Population laenger dauern als ein 60-FPS-Frame lang ist --
-            # ohne dieses Budget wuerde das Zeichnen dann verzoegert und das Bild
-            # ruckeln. Mit dem Budget bleibt das Bild IMMER fluessig; im Zweifel
-            # faellt die tatsaechliche Zugrate hinter das eingestellte Tempo
-            # zurueck, statt dass das ganze Fenster stottert. Fuer wirklich volle
-            # Rechenleistung ohne Zeichnen gibt es den Turbo-Modus (Taste T).
-            if not self.trainer.generation_active:
+        budget = 0.1
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < budget:
+            if self.trainer.generation_active:
+                while not self.trainer.step_generation():
+                    pass
+                self._on_generation_end()
+            else:
                 self.trainer.begin_generation()
-            self.move_accum += dt
-            interval = 1000.0 / SPEED_LEVELS[self.speed_idx]
-            t0 = time.perf_counter()
-            step_budget = 0.012  # ca. 12ms -> laesst noch Zeit zum Zeichnen im 16.6ms-Frame
-            while self.move_accum >= interval and (time.perf_counter() - t0) < step_budget:
-                self.move_accum -= interval
-                if self.trainer.step_generation():
-                    self._on_generation_end()
-                    self.move_accum = 0.0
-                    break
 
     # ================================================================== #
     # Zeichnen: Menue
@@ -282,22 +235,21 @@ class Dashboard:
     def _draw_menu(self) -> None:
         self.screen.fill(Palette.BG)
         cx = WIN_W // 2
-        self._center(self.f_title, "Neuroevolution — Training", Palette.ACCENT, cx, 90)
+        self._center(self.f_title, "Neuroevolution — Training", Palette.ACCENT, cx, 80)
         self._center(self.f_small,
-                     "100 Schlangen lernen Snake von selbst — durch Zucht über Generationen",
-                     Palette.TEXT_DIM, cx, 128)
+                     "Schlangen lernen Snake von selbst — durch Zucht über Generationen",
+                     Palette.TEXT_DIM, cx, 116)
 
         _, rate, strength = MUTATION_PRESETS[self.mut_idx]
         entries = [
             ("Populationsgröße", str(POP_OPTIONS[self.pop_idx])),
             ("Mutation", f"{MUTATION_PRESETS[self.mut_idx][0]}  (Rate {rate}, Stärke {strength})"),
             ("Früchte", str(FRUIT_OPTIONS[self.fruit_idx])),
-            ("Sichtbare Schlangen", str(VISIBLE_OPTIONS[self.visible_idx])),
             ("Bewertungstiefe", EPISODES_PRESETS[self.episodes_idx][0]),
             ("Elite-Anteil", ELITISM_PRESETS[self.elitism_idx][0]),
             ("TRAINING STARTEN", None),
         ]
-        px, pw, row_h, gap, y0 = 300, 580, 48, 10, 176
+        px, pw, row_h, gap, y0 = 260, 580, 50, 11, 168
         for i, (label, value) in enumerate(entries):
             y = y0 + i * (row_h + gap)
             selected = (i == self.menu_row)
@@ -322,19 +274,25 @@ class Dashboard:
 
         self._center(self.f_tiny,
                      "Pfeil hoch/runter wählen   ·   links/rechts ändern   ·   Enter startet",
-                     Palette.TEXT_DIM, cx, WIN_H - 40)
+                     Palette.TEXT_DIM, cx, WIN_H - 30)
 
     # ================================================================== #
-    # Zeichnen: laufendes Training
+    # Zeichnen: laufendes Training (reine Auswertung, kein Grid)
     # ================================================================== #
     def _draw_running(self) -> None:
         self.screen.fill(Palette.BG)
         self._draw_header()
-        if self.turbo:
-            self._draw_turbo_placeholder()
-        else:
-            self._draw_grid()
-        self._draw_panel()
+
+        content = pygame.Rect(PAD, HEADER_H + PAD, WIN_W - 2 * PAD, WIN_H - HEADER_H - 2 * PAD)
+        s = self.last_stats
+        if s is None:
+            self._center(self.f_body, "Erste Generation läuft ...", Palette.TEXT_DIM,
+                        content.centerx, content.y + 40)
+            return
+
+        self._draw_stat_tiles(content, s)
+        self._draw_death_bars(content, s)
+        self._draw_curve(content)
 
     def _draw_header(self) -> None:
         pygame.draw.rect(self.screen, Palette.HEADER_BG, pygame.Rect(0, 0, WIN_W, HEADER_H))
@@ -344,179 +302,74 @@ class Dashboard:
         title = self.f_h2.render(f"Generation {gen}", Palette.TEXT)
         self.screen.blit(title, (PAD, 18))
 
-        # Statusanzeige rechts: Tempo / Turbo / Pause.
-        if self.turbo:
-            status, col = "TURBO", CURVE_BEST
-        elif self.paused:
-            status, col = "PAUSE", Palette.ACCENT_WARN
-        else:
-            status, col = f"Tempo {SPEED_LEVELS[self.speed_idx]}/s", Palette.TEXT_DIM
-        ss = self.f_body.render(status, col)
+        status = "PAUSE" if self.paused else "LÄUFT"
+        col = Palette.ACCENT_WARN if self.paused else Palette.ACCENT
+        gps_txt = ""
+        if self.gen_times:
+            gps = 1.0 / (sum(self.gen_times) / len(self.gen_times))
+            gps_txt = f"   ·   {gps:.2f} Gen/s"
+        ss = self.f_body.render(status + gps_txt, col)
         self.screen.blit(ss, ss.get_rect(midright=(WIN_W - PAD, HEADER_H // 2)))
 
-        hint = self.f_tiny.render(
-            "Leertaste Pause   ·   T Turbo   ·   hoch/runter Tempo   ·   Esc Menü",
-            Palette.TEXT_DIM)
+        hint = self.f_tiny.render("Leertaste Pause   ·   Esc Menü", Palette.TEXT_DIM)
         self.screen.blit(hint, hint.get_rect(center=(WIN_W // 2, HEADER_H // 2)))
 
-    def _draw_turbo_placeholder(self) -> None:
-        rect = pygame.Rect(GRID_X, GRID_Y, GRID_W, GRID_H)
-        pygame.draw.rect(self.screen, MINI_BG, rect, border_radius=8)
-        self._center(self.f_title, "TURBO", CURVE_BEST, rect.centerx, rect.centery - 20)
-        self._center(self.f_small, "Anzeige aus — es wird mit voller Geschwindigkeit gerechnet.",
-                     Palette.TEXT_DIM, rect.centerx, rect.centery + 20)
-        self._center(self.f_small, "T drücken, um wieder zuzuschauen.",
-                     Palette.TEXT_DIM, rect.centerx, rect.centery + 44)
+    def _draw_stat_tiles(self, content: pygame.Rect, s: GenerationStats) -> None:
+        """Acht grosse Kennzahlen-Kacheln (4 Spalten x 2 Reihen)."""
+        eff_txt = f"{s.mean_steps_per_fruit:.1f}" if s.mean_steps_per_fruit is not None else "—"
+        stag = s.generations_since_improvement
+        stag_color = STAGNATION_OK if stag < 15 else (STAGNATION_WARN if stag < 40 else STAGNATION_BAD)
 
-    def _draw_grid(self) -> None:
-        # WICHTIG: self.trainer.games ist eine FLACHE Liste der Laenge
-        # population_size * episodes_per_genome (jedes Genom spielt mehrere
-        # Partien parallel, siehe EvolutionConfig.episodes_per_genome). Damit
-        # jede sichtbare Kachel ein ANDERES Genom zeigt (statt K-mal dasselbe),
-        # zeigen wir hier je Genom nur dessen ERSTE Episode (Index g*k).
-        if not self.trainer or not self.trainer.games:
-            return
-        k = self.trainer.cfg.episodes_per_genome
-        n_genomes = self.trainer.cfg.population_size
-        n = min(self.visible_count, n_genomes)
+        tiles = [
+            ("CHAMPION Ø", f"{s.best_avg_score:.2f}", Palette.ACCENT),
+            ("BESTWERT (EINZELPARTIE)", str(s.alltime_best_score), CURVE_BEST),
+            ("Ø SCORE", f"{s.mean_score:.2f}", Palette.TEXT),
+            ("Ø LÄNGE", f"{s.mean_length:.1f}", Palette.TEXT),
+            ("Ø SCHRITTE", f"{s.mean_steps:.0f}", Palette.TEXT),
+            ("EFFIZIENZ (SCHR./FRUCHT)", eff_txt, Palette.TEXT),
+            ("DIVERSITÄT", f"{s.diversity:.3f}", Palette.TEXT),
+            ("STAGNATION", f"{stag} Gen", stag_color),
+        ]
+        cols, rows = 4, 2
+        gap = 14
+        tile_w = (content.width - (cols - 1) * gap) / cols
+        tile_h = 92
+        for i, (label, value, color) in enumerate(tiles):
+            r, c = divmod(i, cols)
+            x = content.x + c * (tile_w + gap)
+            y = content.y + r * (tile_h + gap)
+            rect = pygame.Rect(int(x), int(y), int(tile_w), tile_h)
+            pygame.draw.rect(self.screen, PANEL_BG, rect, border_radius=10)
+            self._center(self.f_label, label, Palette.TEXT_DIM, rect.centerx, rect.y + 22)
+            self._center(self.f_value, value, color, rect.centerx, rect.y + 58)
 
-        gc = math.ceil(math.sqrt(n * GRID_W / GRID_H))
-        gr = math.ceil(n / gc)
-        cell_w = (GRID_W - (gc - 1) * 6) / gc
-        cell_h = (GRID_H - (gr - 1) * 6) / gr
+        self._tiles_bottom = content.y + rows * tile_h + (rows - 1) * gap
 
-        elite = self.trainer.cfg.elitism
+    def _draw_death_bars(self, content: pygame.Rect, s: GenerationStats) -> None:
+        y = self._tiles_bottom + 22
+        self._text(self.f_label, "TODESURSACHEN (diese Generation)", Palette.TEXT_DIM, content.x, y)
+        y += 24
+        total = max(1, sum(s.deaths.values()))
+        causes = [
+            ("Wand", s.deaths.get("wall", 0), (231, 111, 81)),
+            ("Selbst", s.deaths.get("self", 0), (233, 196, 106)),
+            ("Verhungert", s.deaths.get("starvation", 0), (109, 158, 235)),
+            ("Überlebt", s.deaths.get("timeout", 0) + s.deaths.get("won", 0), Palette.ACCENT),
+        ]
+        col_w = content.width / 2
+        for i, (name, count, color) in enumerate(causes):
+            r, c = divmod(i, 2)
+            x = content.x + c * col_w
+            yy = y + r * 26
+            self._death_bar(int(x), yy, int(col_w - 24), name, count, count / total, color)
 
-        # Live-Fuehrender: welche der SICHTBAREN Schlangen hat gerade den
-        # hoechsten Score? Anders als der gruene Elite-Rahmen (= aus der LETZTEN
-        # Generation uebernommen) zeigt das, wer in DIESER laufenden Runde
-        # gerade vorne liegt.
-        visible_games = [self.trainer.games[i * k] for i in range(n)]
-        leader_idx = max(range(n), key=lambda i: visible_games[i].score) if n else -1
-
-        for idx in range(n):
-            r, c = divmod(idx, gc)
-            x = GRID_X + c * (cell_w + 6)
-            y = GRID_Y + r * (cell_h + 6)
-            self._draw_mini(visible_games[idx],
-                            pygame.Rect(int(x), int(y), int(cell_w), int(cell_h)),
-                            is_elite=(idx < elite),
-                            is_leader=(idx == leader_idx and visible_games[idx].score > 0))
-
-    def _draw_mini(self, game, rect: pygame.Rect, is_elite: bool, is_leader: bool = False) -> None:
-        # Abgerundete Ecken (border_radius) sind in pygame deutlich teurer als
-        # ein einfaches Rechteck. Bei sehr vielen kleinen Kacheln (grosse
-        # Populationen/viele sichtbare Schlangen) faellt das messbar ins
-        # Gewicht -- deshalb nur "abrunden", wenn die Kachel gross genug ist,
-        # dass man den Unterschied ueberhaupt sieht.
-        radius = 4 if rect.width > 60 else 0
-        pygame.draw.rect(self.screen, MINI_BG, rect, border_radius=radius)
-        cw = rect.width / game.cols
-        ch = rect.height / game.rows
-        csize = max(1, int(math.ceil(min(cw, ch))))
-
-        for (fx, fy) in game.fruits:
-            px = rect.x + fx * cw
-            py = rect.y + fy * ch
-            pygame.draw.rect(self.screen, FRUIT, (int(px), int(py), csize, csize))
-
-        for i, (sx, sy) in enumerate(game.snake):
-            color = SNAKE_HEAD if i == 0 else SNAKE_BODY
-            px = rect.x + sx * cw
-            py = rect.y + sy * ch
-            pygame.draw.rect(self.screen, color, (int(px), int(py), csize, csize))
-
-        if is_leader:
-            border, width = LEADER_BORDER, 3
-        elif is_elite:
-            border, width = ELITE_BORDER, 2
-        elif game.alive:
-            border, width = ALIVE_BORDER, 2
-        else:
-            border, width = DEAD_BORDER, 2
-        pygame.draw.rect(self.screen, border, rect, width=width, border_radius=radius)
-
-        if rect.width > 70:
-            sc = self.f_tiny.render(str(game.score), Palette.TEXT)
-            self.screen.blit(sc, (rect.x + 4, rect.y + 3))
-
-    # ================================================================== #
-    # Zeichnen: Statistik-Panel + Lernkurve
-    # ================================================================== #
-    def _draw_panel(self) -> None:
-        s = self.last_stats
-        panel = pygame.Rect(PANEL_X, GRID_Y, PANEL_W, GRID_H)
-        pygame.draw.rect(self.screen, Palette.HEADER_BG, panel, border_radius=8)
-
-        x = PANEL_X + 18
-        y = GRID_Y + 16
-        self._text(self.f_label, "STATISTIK", Palette.TEXT_DIM, x, y)
-        y += 26
-
-        if s is None:
-            self._text(self.f_small, "Erste Generation laeuft ...", Palette.TEXT_DIM, x, y)
-        else:
-            # Kennzahlenblock (zweispaltig). "Champion Ø" ist die ROBUSTE Zahl
-            # (ueber episodes_per_genome Partien gemittelt) -- die zaehlt fuer
-            # echte Qualitaet, nicht eine einzelne Gluecks-Partie.
-            col2 = PANEL_X + PANEL_W // 2 + 4
-            self._stat_pair(x, col2, y, "Champion Ø", f"{s.best_avg_score:.2f}",
-                            "Beste Einzelpartie", str(s.best_score),
-                            Palette.ACCENT, Palette.TEXT_DIM)
-            y += 54
-            self._stat_pair(x, col2, y, "Ø Score", f"{s.mean_score:.2f}",
-                            "Ø Länge", f"{s.mean_length:.1f}",
-                            Palette.TEXT, Palette.TEXT)
-            y += 54
-            eff_txt = f"{s.mean_steps_per_fruit:.1f}" if s.mean_steps_per_fruit is not None else "—"
-            self._stat_pair(x, col2, y, "Ø Schritte", f"{s.mean_steps:.0f}",
-                            "Effizienz (Schr./Frucht)", eff_txt,
-                            Palette.TEXT, Palette.TEXT)
-            y += 54
-            stag = s.generations_since_improvement
-            stag_color = STAGNATION_OK if stag < 15 else (STAGNATION_WARN if stag < 40 else STAGNATION_BAD)
-            self._stat_pair(x, col2, y, "Diversität", f"{s.diversity:.3f}",
-                            "Stagnation", f"{stag} Gen",
-                            Palette.TEXT, stag_color)
-            y += 60
-
-            # Todesursachen als Balken.
-            self._text(self.f_label, "TODESURSACHEN (diese Gen)", Palette.TEXT_DIM, x, y)
-            y += 22
-            total = max(1, sum(s.deaths.values()))
-            causes = [
-                ("Wand", s.deaths.get("wall", 0), (231, 111, 81)),
-                ("Selbst", s.deaths.get("self", 0), (233, 196, 106)),
-                ("Verhungert", s.deaths.get("starvation", 0), (109, 158, 235)),
-                ("Überlebt", s.deaths.get("timeout", 0) + s.deaths.get("won", 0), Palette.ACCENT),
-            ]
-            for name, count, color in causes:
-                self._death_bar(x, y, PANEL_W - 36, name, count, count / total, color)
-                y += 26
-            y += 6
-
-            # Tempo-Info.
-            if self.gen_times:
-                gps = 1.0 / (sum(self.gen_times) / len(self.gen_times))
-                self._text(self.f_small, f"Tempo: {gps:.1f} Generationen/s",
-                           Palette.TEXT_DIM, x, y)
-            y += 26
-
-        # Lernkurve unten im Panel.
-        curve = pygame.Rect(PANEL_X + 14, GRID_Y + GRID_H - 190, PANEL_W - 28, 172)
-        self._draw_curve(curve)
-
-    def _stat_pair(self, x1, x2, y, l1, v1, l2, v2, c1, c2) -> None:
-        self._text(self.f_label, l1, Palette.TEXT_DIM, x1, y)
-        self._text(self.f_value, v1, c1, x1, y + 16)
-        self._text(self.f_label, l2, Palette.TEXT_DIM, x2, y)
-        self._text(self.f_value, v2, c2, x2, y + 16)
+        self._death_bottom = y + 2 * 26 + 10
 
     def _death_bar(self, x, y, w, name, count, frac, color) -> None:
         label = self.f_small.render(f"{name}", Palette.TEXT)
         self.screen.blit(label, (x, y))
-        bar_x = x + 96
-        bar_w = w - 96 - 34
+        bar_x = x + 130
+        bar_w = w - 130 - 40
         pygame.draw.rect(self.screen, (32, 36, 48), (bar_x, y + 2, bar_w, 12), border_radius=6)
         if frac > 0:
             pygame.draw.rect(self.screen, color,
@@ -524,11 +377,13 @@ class Dashboard:
         cnt = self.f_small.render(str(count), Palette.TEXT_DIM)
         self.screen.blit(cnt, cnt.get_rect(midright=(x + w, y + 8)))
 
-    def _draw_curve(self, rect: pygame.Rect) -> None:
-        pygame.draw.rect(self.screen, MINI_BG, rect, border_radius=6)
+    def _draw_curve(self, content: pygame.Rect) -> None:
+        rect = pygame.Rect(content.x, self._death_bottom, content.width,
+                           content.bottom - self._death_bottom)
+        pygame.draw.rect(self.screen, PANEL_BG, rect, border_radius=10)
         self._text(self.f_label, "LERNKURVE (Score / Generation)", Palette.TEXT_DIM,
-                   rect.x + 8, rect.y + 6)
-        plot = pygame.Rect(rect.x + 34, rect.y + 28, rect.width - 44, rect.height - 46)
+                   rect.x + 12, rect.y + 10)
+        plot = pygame.Rect(rect.x + 40, rect.y + 36, rect.width - 56, rect.height - 56)
 
         hist = self.trainer.history if self.trainer else []
         if len(hist) < 2:
@@ -545,13 +400,11 @@ class Dashboard:
             py = plot.y + plot.height - (val / vmax) * plot.height
             return (px, py)
 
-        # Achsenlinien.
         pygame.draw.line(self.screen, Palette.BORDER,
                          (plot.x, plot.y), (plot.x, plot.y + plot.height), 1)
         pygame.draw.line(self.screen, Palette.BORDER,
                          (plot.x, plot.y + plot.height), (plot.x + plot.width, plot.y + plot.height), 1)
-        # y-Skala Beschriftung (max).
-        self._text(self.f_tiny, str(int(vmax)), Palette.TEXT_DIM, rect.x + 6, plot.y - 4)
+        self._text(self.f_tiny, str(int(vmax)), Palette.TEXT_DIM, rect.x + 8, plot.y - 4)
 
         best_line = [pt(i, v) for i, v in enumerate(best_vals)]
         mean_line = [pt(i, v) for i, v in enumerate(mean_vals)]
@@ -560,9 +413,8 @@ class Dashboard:
         if len(mean_line) >= 2:
             pygame.draw.lines(self.screen, CURVE_MEAN, False, mean_line, 2)
 
-        # kleine Legende.
-        self._text(self.f_tiny, "Bestwert", CURVE_BEST, plot.x + 6, plot.y + 2)
-        self._text(self.f_tiny, "Ø Score", CURVE_MEAN, plot.x + 70, plot.y + 2)
+        self._text(self.f_tiny, "Bestwert", CURVE_BEST, plot.x + 6, plot.y + 4)
+        self._text(self.f_tiny, "Ø Score", CURVE_MEAN, plot.x + 70, plot.y + 4)
 
     # ------------------------------------------------------------------ #
     # kleine Text-Helfer

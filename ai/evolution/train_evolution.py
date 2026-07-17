@@ -67,8 +67,15 @@ class EvolutionConfig:
     wrap_walls: bool = False
 
     # Trainings-Regeln (KEINE Spielregeln!)
-    max_steps_without_fruit: int = 120   # Verhungern-Timeout
-    max_steps: int = 1500                # harte Obergrenze pro Partie
+    max_steps_without_fruit: int = 120   # Verhungern-Timeout -- der einzige "kuenstliche" Tod
+    # max_steps ist NUR ein Sicherheitsnetz (falls doch mal ein Endlos-Sonderfall
+    # auftritt), KEIN Trainings-Limit mehr: eine Schlange, die weiterhin regel-
+    # maessig Fruechte findet, soll so lange leben duerfen, bis sie entweder
+    # wirklich stirbt (Wand/Selbst) oder verhungert (max_steps_without_fruit).
+    # Dank der Performance-Optimierungen (persistentes Koerper-Set, nur aktive
+    # Partien werden pro Zug angefasst) kostet das kaum noch Zeit -- lange,
+    # erfolgreiche Partien sind jetzt guenstig statt teuer.
+    max_steps: int = 20000
 
     # Fitness-Gewichte: fitness = w_steps*Schritte + w_fruit*Fruechte + w_fruit_sq*Fruechte^2
     #                            + Effizienz-Bonus (siehe unten)
