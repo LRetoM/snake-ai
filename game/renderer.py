@@ -286,10 +286,10 @@ class Renderer:
         self._blit_centered(self.f_small, "Leertaste = weiter      Esc = Menü",
                             Palette.TEXT_DIM, cx, WINDOW_HEIGHT // 2 + 34)
 
-    def draw_game_over_overlay(self, score, high_score, is_new_best) -> None:
+    def draw_game_over_overlay(self, score, high_score, is_new_best, title="Game Over") -> None:
         self._dim_screen(205)
         cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
-        self._blit_centered(self.f_title, "Game Over", Palette.ACCENT_WARN, cx, cy - 88)
+        self._blit_centered(self.f_title, title, Palette.ACCENT_WARN, cx, cy - 88)
         self._blit_centered(self.f_h2, f"{score} Punkte", Palette.TEXT, cx, cy - 20)
         if is_new_best:
             self._blit_centered(self.f_body, "Neuer Bestwert!", Palette.ACCENT, cx, cy + 30)
@@ -311,19 +311,34 @@ class Renderer:
     # ------------------------------------------------------------------ #
     # Startmenue / Einstellungen
     # ------------------------------------------------------------------ #
-    def draw_menu(self, entries: list[tuple[str, str | None]], selected_index: int) -> None:
+    def draw_menu(
+        self,
+        entries: list[tuple[str, str | None]],
+        selected_index: int,
+        title: str = "SNAKE",
+        subtitle: str = "Klassisch  ·  Pfeiltasten oder WASD",
+        subtitle2: str | None = None,
+    ) -> None:
+        """Zeichnet ein Startmenue. title/subtitle sind anpassbar, damit z.B.
+        watch_ai.py denselben Menue-Aufbau mit eigener Ueberschrift wiederverwenden
+        kann. subtitle2 ist eine optionale zweite, kleinere Zeile (z.B. fuer
+        Champion-Infos wie Score/Generation/Trainingsbedingungen)."""
         self.surface.fill(Palette.BG)
         cx = WINDOW_WIDTH // 2
 
-        self._blit_centered(self.f_title, "SNAKE", Palette.ACCENT, cx, 118)
-        self._blit_centered(self.f_small, "Klassisch  ·  Pfeiltasten oder WASD",
-                            Palette.TEXT_DIM, cx, 168)
+        self._blit_centered(self.f_title, title, Palette.ACCENT, cx, 118)
+        self._blit_centered(self.f_small, subtitle, Palette.TEXT_DIM, cx, 168)
 
         panel_x = 64
         panel_w = WINDOW_WIDTH - 2 * panel_x
         row_h = 54
         gap = 14
-        start_y = 250
+
+        if subtitle2:
+            self._blit_centered(self.f_tiny, subtitle2, Palette.TEXT_DIM, cx, 192)
+            start_y = 262
+        else:
+            start_y = 250
 
         for i, (label, value) in enumerate(entries):
             y = start_y + i * (row_h + gap)

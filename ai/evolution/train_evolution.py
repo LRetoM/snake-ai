@@ -289,7 +289,14 @@ class EvolutionTrainer:
         )
 
     def _save_champion(self) -> None:
-        """Speichert das bisher beste Netz im PyTorch-Format + als Genom."""
+        """Speichert das bisher beste Netz im PyTorch-Format + als Genom.
+
+        Wichtig: Die Umgebungs-Einstellungen (Fruchtanzahl, Wandmodus, Feldgroesse)
+        werden MIT gespeichert. So kann eine spaetere "KI zuschauen"-Ansicht die
+        Schlange fair unter genau den Bedingungen testen, unter denen sie
+        trainiert wurde -- ein Champion, der mit 3 Fruechten gezuechtet wurde,
+        soll nicht ploetzlich mit nur 1 Frucht bewertet werden.
+        """
         if self.champion is None:
             return
         os.makedirs(_MODEL_DIR, exist_ok=True)
@@ -300,6 +307,10 @@ class EvolutionTrainer:
                 "hidden": self.cfg.hidden,
                 "score": self.champion["score"],
                 "generation": self.champion["generation"],
+                "grid_cols": self.cfg.grid_cols,
+                "grid_rows": self.cfg.grid_rows,
+                "fruit_count": self.cfg.fruit_count,
+                "wrap_walls": self.cfg.wrap_walls,
             },
             os.path.join(_MODEL_DIR, "evo_champion.pt"),
         )
