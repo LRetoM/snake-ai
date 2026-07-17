@@ -46,7 +46,7 @@ MUTATION_PRESETS = [
     ("Mittel", 0.05, 0.20),
     ("Hoch", 0.10, 0.35),
 ]
-FRUIT_OPTIONS = [1, 2, 3, 5]
+FRUIT_OPTIONS = list(range(1, 11))  # 1 bis 10, wie im Menschen-Spiel
 VISIBLE_OPTIONS = [12, 20, 30, 50, 80, 120]
 SPEED_LEVELS = [10, 20, 40, 80, 160, 320, 640, 1000]  # Zuege pro Sekunde in der Live-Ansicht
 
