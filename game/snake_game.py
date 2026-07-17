@@ -124,9 +124,12 @@ class SnakeGame:
         self.alive: bool = True
         self.won: bool = False
 
-        # Kleiner Eingabepuffer: erlaubt bis zu 2 schnell hintereinander
-        # gedrueckte Richtungswechsel, ohne dass Eingaben "verschluckt" werden.
-        self._turn_queue: list[Direction] = []
+        # Gepufferter naechster Zug (hoechstens EINER). Ein neuer Tastendruck
+        # ueberschreibt einen bereits gepufferten Zug komplett -- so wirkt die
+        # Steuerung so reaktionsschnell wie moeglich: der zuletzt gedrueckte
+        # gueltige Zug gewinnt immer, es gibt keine Warteschlange aus mehreren
+        # Zuegen, die erst nacheinander abgearbeitet werden muesste.
+        self._pending_turn: Direction | None = None
 
         self.reset()
 
@@ -146,7 +149,7 @@ class SnakeGame:
             (mid_x - 2, mid_y),
         ]
         self.direction = Direction.RIGHT
-        self._turn_queue.clear()
+        self._pending_turn = None
 
         self.score = 0
         self.steps = 0
@@ -163,23 +166,21 @@ class SnakeGame:
     def change_direction(self, new_direction: Direction) -> None:
         """Legt die naechste Richtung fest (fuer menschliche Steuerung).
 
-        Die Richtung wird gepuffert und erst beim naechsten step() angewandt.
-        Das verhindert einen klassischen Snake-Bug: Wenn man in EINEM Frame
-        schnell z.B. 'hoch' dann 'links' drueckt, wuerde ohne Puffer sonst der
-        letzte Tastendruck die Pruefung austricksen und man laeuft in sich selbst.
+        Die Richtung wird gepuffert und erst beim naechsten step() angewandt
+        (verhindert 180-Grad-Selbstmord: die Pruefung erfolgt gegen die aktuell
+        wirksame Richtung, nicht gegen einen erst geplanten Zug).
+
+        Ein neuer Tastendruck ERSETZT einen bereits gepufferten Zug vollstaendig.
+        Das ist bewusst so (nicht als Warteschlange von mehreren Zuegen), damit
+        die Steuerung maximal reaktionsschnell bleibt: Aendert der Spieler
+        innerhalb eines Schritts seine Meinung, zaehlt immer der zuletzt
+        gedrueckte gueltige Zug -- er muss nicht erst einen aelteren, ueberholten
+        Zug abwarten.
         """
-        # Referenzrichtung ist die letzte bereits eingereihte Richtung
-        # (oder die aktuelle, falls die Warteschlange leer ist).
-        reference = self._turn_queue[-1] if self._turn_queue else self.direction
-
-        # Kein 180-Grad-Wende (waere sofortiger Selbstmord) und keine
-        # sinnlose Wiederholung derselben Richtung.
-        if new_direction == reference or new_direction == reference.opposite:
+        # Immer gegen die AKTUELLE (nicht eine gepufferte) Richtung pruefen.
+        if new_direction == self.direction or new_direction == self.direction.opposite:
             return
-
-        # Maximal 2 Wechsel vormerken -> bleibt reaktionsschnell, ohne zu stauen.
-        if len(self._turn_queue) < 2:
-            self._turn_queue.append(new_direction)
+        self._pending_turn = new_direction
 
     # ------------------------------------------------------------------ #
     # Ein Spielschritt -- KI-Variante (relative Aktion)
@@ -192,7 +193,7 @@ class SnakeGame:
         ueber geradeaus/links/rechts. Ein 180-Grad-Selbstmord ist damit unmoeglich.
         """
         self.direction = relative_turn(self.direction, action)
-        self._turn_queue.clear()  # evtl. gepufferte Menscheneingaben verwerfen
+        self._pending_turn = None  # evtl. gepufferte Menscheneingabe verwerfen
         return self.step()
 
     # ------------------------------------------------------------------ #
@@ -203,9 +204,10 @@ class SnakeGame:
         if not self.alive or self.won:
             return StepResult(self.alive, False, self.won, self.score)
 
-        # 1) Naechste gepufferte Richtung uebernehmen (falls vorhanden).
-        if self._turn_queue:
-            self.direction = self._turn_queue.pop(0)
+        # 1) Gepufferten Zug uebernehmen (falls vorhanden).
+        if self._pending_turn is not None:
+            self.direction = self._pending_turn
+            self._pending_turn = None
 
         # 2) Neue Kopfposition berechnen.
         head_x, head_y = self.snake[0]

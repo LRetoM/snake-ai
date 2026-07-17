@@ -180,17 +180,36 @@ class Renderer:
             color = self._snake_color(i, n)
             cx, cy = centers[i]
 
-            # Verbindungsstueck zum vorderen Nachbarn fuellt die Luecke -> Roehre.
+            # Verbindung zum vorderen Nachbarn -- ueber den FESTEN Drehpunkt
+            # (das gemeinsame Gitterfeld curr[i]), nicht als direkte Diagonale.
+            # Grund: In einer Kurve bewegen sich zwei Nachbarsegmente gleichzeitig
+            # aufeinander zu (eines verlaesst die Ecke, eines betritt sie), wodurch
+            # ihr direkter Abstand kurzzeitig kleiner als eine Zellbreite wird --
+            # das liess den Koerper an Ecken aufgeblaeht/verzerrt aussehen. Der
+            # Umweg ueber den Drehpunkt haelt die Weglaenge konstant (in geraden
+            # Abschnitten liegt der Drehpunkt ohnehin auf der geraden Linie).
             if i > 0:
-                px, py = centers[i - 1]
-                if abs(px - cx) <= 1.5 * CELL_SIZE and abs(py - cy) <= 1.5 * CELL_SIZE:
-                    pygame.draw.line(self.surface, color, (px, py), (cx, cy), BODY_WIDTH)
+                pivot = self._cell_center(*curr[i])
+                self._draw_link(centers[i - 1], pivot, color)
+                self._draw_link(pivot, (cx, cy), color)
+                _fill_circle(self.surface, pivot[0], pivot[1], BODY_RADIUS, color)
 
             _fill_circle(self.surface, cx, cy, BODY_RADIUS, color)
 
         # Augen zuletzt oben auf den Kopf.
         if n:
             self._draw_eyes(game, centers[0])
+
+    def _draw_link(self, a, b, color) -> None:
+        """Dicke Verbindungslinie zwischen zwei Punkten (Roehren-Segment).
+
+        Wird bei Wand-Durchgang uebersprungen, wenn die Strecke unplausibel lang
+        ist (Teleport auf die gegenueberliegende Feldseite).
+        """
+        ax, ay = a
+        bx, by = b
+        if abs(ax - bx) <= 1.5 * CELL_SIZE and abs(ay - by) <= 1.5 * CELL_SIZE:
+            pygame.draw.line(self.surface, color, a, b, BODY_WIDTH)
 
     def _interp_centers(self, prev_snake, curr, alpha):
         """Berechnet fuer jedes aktuelle Segment den (interpolierten) Pixel-Mittelpunkt."""
