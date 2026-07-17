@@ -34,8 +34,8 @@ def main():
             timeout=5,
         )
         if result.returncode == 0:
-            print(f"✓ Nutze PyPy3 (5-10x schneller als CPython)")
-            print(f"  {result.stdout.strip()}\n")
+            print(f"[OK] Nutze PyPy3 (5-10x schneller als CPython)")
+            print(f"     {result.stdout.strip()}\n")
             # Starte Training mit PyPy3
             subprocess.run([sys.executable, str(PROJECT_ROOT / "train_evolution.py")])
             return
