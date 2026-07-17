@@ -124,12 +124,19 @@ class SnakeGame:
         self.alive: bool = True
         self.won: bool = False
 
-        # Gepufferter naechster Zug (hoechstens EINER). Ein neuer Tastendruck
-        # ueberschreibt einen bereits gepufferten Zug komplett -- so wirkt die
-        # Steuerung so reaktionsschnell wie moeglich: der zuletzt gedrueckte
-        # gueltige Zug gewinnt immer, es gibt keine Warteschlange aus mehreren
-        # Zuegen, die erst nacheinander abgearbeitet werden muesste.
-        self._pending_turn: Direction | None = None
+        # Warteschlange kommender Zuege (max. 2). Wichtig: das ist eine ECHTE
+        # Warteschlange (anhaengen, nicht ueberschreiben) -- jeder darin
+        # gepufferte Zug wird garantiert genau einmal angewandt, nacheinander,
+        # je einer pro step(). Das ist entscheidend fuer die Sicherheit: wuerde
+        # ein neuer Tastendruck einen aelteren ungeprueft ueberschreiben, koennte
+        # z.B. "rechts" (gueltig ab der aktuellen Richtung) durch ein schnell
+        # hinterher gedruecktes "unten" ersetzt werden, OHNE dass "rechts" je
+        # tatsaechlich gefahren wurde -- und "unten" waere dann eine ECHTE
+        # 180-Grad-Wende relativ zur wirklich noch aktiven alten Richtung
+        # (unsichtbarer Tod in den eigenen Koerper). Da hier angehaengt statt
+        # ersetzt wird, wird jeder Zug garantiert gegen die Richtung geprueft,
+        # die zum Zeitpunkt seiner Anwendung TATSAECHLICH aktiv sein wird.
+        self._turn_queue: list[Direction] = []
 
         self.reset()
 
@@ -149,7 +156,7 @@ class SnakeGame:
             (mid_x - 2, mid_y),
         ]
         self.direction = Direction.RIGHT
-        self._pending_turn = None
+        self._turn_queue.clear()
 
         self.score = 0
         self.steps = 0
@@ -166,24 +173,29 @@ class SnakeGame:
     def change_direction(self, new_direction: Direction) -> None:
         """Legt die naechste Richtung fest (fuer menschliche Steuerung).
 
-        Es wird stets nur EIN Zug gepuffert; ein neuer Tastendruck ERSETZT einen
-        schon gepufferten Zug komplett. So zaehlt immer der zuletzt gedrueckte
-        gueltige Zug, ohne dass ein ueberholter aelterer Zug erst abgearbeitet
-        werden muesste (maximale Reaktionsschnelligkeit).
-
-        Wichtig fuer die Gueltigkeitspruefung: Die Referenzrichtung ist der
-        BEREITS gepufferte Zug (falls vorhanden), sonst die aktuelle Richtung.
-        Beispiel: Schlange faehrt nach oben, Spieler drueckt schnell hinter-
-        einander rechts, dann unten. "Rechts" wird gepuffert. "Unten" ist relativ
-        zu "oben" verboten (180-Grad), aber relativ zum bereits gewaehlten
-        "rechts" ein ganz normaler 90-Grad-Abbieger -- und muss deshalb erlaubt
-        sein. Wuerde man immer nur gegen die alte, noch aktive Richtung pruefen,
-        wuerde so ein zweiter schneller Tastendruck faelschlich verworfen.
+        Jeder gueltige Zug wird an die Warteschlange ANGEHAENGT (nicht ersetzt)
+        und spaeter, einer pro step(), tatsaechlich gefahren. Das ist wichtig
+        fuer die Sicherheit: Ein neuer Tastendruck darf einen aelteren, noch
+        nicht gefahrenen Zug nicht ungeprueft verwerfen -- sonst koennte z.B.
+        "rechts" (gueltig ab der aktuellen Richtung) durch ein schnell hinterher
+        gedruecktes "unten" ersetzt werden, OHNE dass "rechts" je tatsaechlich
+        gefahren wurde. "Unten" waere dann in Wahrheit eine 180-Grad-Wende
+        relativ zur noch aktiven ALTEN Richtung -- ein fuer den Spieler
+        unsichtbarer Tod in den eigenen Koerper. Weil hier angehaengt statt
+        ersetzt wird, wird jeder Zug garantiert gegen die Richtung geprueft,
+        die zum Zeitpunkt seiner Anwendung tatsaechlich aktiv sein wird:
+        Schlange faehrt oben, Spieler drueckt schnell rechts dann unten ->
+        "rechts" wird geprueft gegen oben (gueltig, wird angehaengt), "unten"
+        wird geprueft gegen das bereits angehaengte "rechts" (ebenfalls gueltig)
+        -- und im naechsten step() wird zuerst wirklich nach rechts, dann nach
+        unten gefahren. Maximal 2 Zuege werden vorgehalten, damit die
+        Warteschlange bei wildem Tastenspam nicht unbegrenzt waechst.
         """
-        reference = self._pending_turn if self._pending_turn is not None else self.direction
+        reference = self._turn_queue[-1] if self._turn_queue else self.direction
         if new_direction == reference or new_direction == reference.opposite:
             return
-        self._pending_turn = new_direction
+        if len(self._turn_queue) < 2:
+            self._turn_queue.append(new_direction)
 
     # ------------------------------------------------------------------ #
     # Ein Spielschritt -- KI-Variante (relative Aktion)
@@ -196,7 +208,7 @@ class SnakeGame:
         ueber geradeaus/links/rechts. Ein 180-Grad-Selbstmord ist damit unmoeglich.
         """
         self.direction = relative_turn(self.direction, action)
-        self._pending_turn = None  # evtl. gepufferte Menscheneingabe verwerfen
+        self._turn_queue.clear()  # evtl. gepufferte Menscheneingaben verwerfen
         return self.step()
 
     # ------------------------------------------------------------------ #
@@ -207,10 +219,9 @@ class SnakeGame:
         if not self.alive or self.won:
             return StepResult(self.alive, False, self.won, self.score)
 
-        # 1) Gepufferten Zug uebernehmen (falls vorhanden).
-        if self._pending_turn is not None:
-            self.direction = self._pending_turn
-            self._pending_turn = None
+        # 1) Naechsten gepufferten Zug uebernehmen (falls vorhanden).
+        if self._turn_queue:
+            self.direction = self._turn_queue.pop(0)
 
         # 2) Neue Kopfposition berechnen.
         head_x, head_y = self.snake[0]
