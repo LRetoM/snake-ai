@@ -47,8 +47,27 @@ MUTATION_PRESETS = [
     ("Hoch", 0.10, 0.35),
 ]
 FRUIT_OPTIONS = [1, 2, 3, 5]
-VISIBLE_OPTIONS = [12, 20, 30, 50]
-SPEED_LEVELS = [10, 20, 40, 80, 160]  # Zuege pro Sekunde in der Live-Ansicht
+VISIBLE_OPTIONS = [12, 20, 30, 50, 80, 120]
+SPEED_LEVELS = [10, 20, 40, 80, 160, 320, 640, 1000]  # Zuege pro Sekunde in der Live-Ansicht
+
+# Bewertungs-Tiefe: wie viele unabhaengige Partien (mit je eigenem Zufalls-
+# Fruchtlayout) jedes Genom pro Generation spielt, bevor seine Fitness aus dem
+# DURCHSCHNITT gebildet wird. Mehr Partien = robustere, weniger vom Zufall
+# abhaengige Bewertung (verhindert, dass ein Genom nur durch ein gluecklich
+# leichtes Layout hoch bewertet wird), kostet aber proportional mehr Rechenzeit.
+EPISODES_PRESETS = [
+    ("Schnell (1x)", 1),
+    ("Ausgewogen (3x)", 3),
+    ("Robust (5x)", 5),
+]
+# Elite-Anteil: so viele der besten Genome kommen JEDE Generation unveraendert
+# in die naechste Runde (siehe gruener Rahmen im Raster). Schuetzt davor, dass
+# ein bereits gefundenes gutes Genom durch Mutation/Zufall wieder verloren geht.
+ELITISM_PRESETS = [
+    ("Wenig (2%)", 0.02),
+    ("Mittel (5%)", 0.05),
+    ("Viel (10%)", 0.10),
+]
 
 # ----------------------------- Extra-Farben -------------------------------- #
 MINI_BG = (22, 25, 35)
@@ -58,8 +77,12 @@ FRUIT = Palette.FRUIT
 ALIVE_BORDER = (48, 60, 58)
 DEAD_BORDER = (60, 40, 44)
 ELITE_BORDER = Palette.ACCENT
+LEADER_BORDER = (250, 200, 90)  # aktuell fuehrende Schlange DIESER Generation (live)
 CURVE_MEAN = Palette.ACCENT
 CURVE_BEST = (250, 200, 90)
+STAGNATION_OK = Palette.ACCENT
+STAGNATION_WARN = (233, 196, 106)
+STAGNATION_BAD = Palette.ACCENT_WARN
 
 
 class Dashboard:
@@ -85,7 +108,10 @@ class Dashboard:
         self.mut_idx = 1       # Mittel
         self.fruit_idx = 0     # 1
         self.visible_idx = 1   # 20
+        self.episodes_idx = 1  # Ausgewogen (3x)
+        self.elitism_idx = 1   # Mittel (5%)
         self.menu_row = 0
+        self._menu_row_count = 7  # 6 Einstellungen + START
 
         self.state = Dashboard.MENU
         self.running = True
@@ -132,9 +158,9 @@ class Dashboard:
 
     def _on_menu_key(self, key: int) -> None:
         if key in (pygame.K_UP, pygame.K_w):
-            self.menu_row = (self.menu_row - 1) % 5
+            self.menu_row = (self.menu_row - 1) % self._menu_row_count
         elif key in (pygame.K_DOWN, pygame.K_s):
-            self.menu_row = (self.menu_row + 1) % 5
+            self.menu_row = (self.menu_row + 1) % self._menu_row_count
         elif key in (pygame.K_LEFT, pygame.K_a):
             self._menu_adjust(-1)
         elif key in (pygame.K_RIGHT, pygame.K_d):
@@ -153,6 +179,10 @@ class Dashboard:
             self.fruit_idx = (self.fruit_idx + delta) % len(FRUIT_OPTIONS)
         elif self.menu_row == 3:
             self.visible_idx = (self.visible_idx + delta) % len(VISIBLE_OPTIONS)
+        elif self.menu_row == 4:
+            self.episodes_idx = (self.episodes_idx + delta) % len(EPISODES_PRESETS)
+        elif self.menu_row == 5:
+            self.elitism_idx = (self.elitism_idx + delta) % len(ELITISM_PRESETS)
 
     def _on_run_key(self, key: int) -> None:
         if key == pygame.K_SPACE:
@@ -171,12 +201,17 @@ class Dashboard:
     # ================================================================== #
     def _start_training(self) -> None:
         _, rate, strength = MUTATION_PRESETS[self.mut_idx]
+        pop_size = POP_OPTIONS[self.pop_idx]
+        _, elite_frac = ELITISM_PRESETS[self.elitism_idx]
+        elite_count = max(1, round(pop_size * elite_frac))
         self.cfg = EvolutionConfig(
-            population_size=POP_OPTIONS[self.pop_idx],
+            population_size=pop_size,
             hidden=DEFAULT_HIDDEN,
+            elitism=elite_count,
             mutation_rate=rate,
             mutation_strength=strength,
             fruit_count=FRUIT_OPTIONS[self.fruit_idx],
+            episodes_per_genome=EPISODES_PRESETS[self.episodes_idx][1],
         )
         self.visible_count = min(VISIBLE_OPTIONS[self.visible_idx], self.cfg.population_size)
         self.trainer = EvolutionTrainer(self.cfg, log_to_csv=True)
@@ -204,9 +239,12 @@ class Dashboard:
             return
 
         if self.turbo:
-            # So viele Generationen wie in ein kleines Zeitbudget passen ->
-            # maximale Geschwindigkeit, UI bleibt trotzdem reaktiv.
-            budget = 0.05
+            # Reines Zeitbudget, keine Zeichnung dazwischen -> nutzt die volle
+            # Rechenleistung. Groesseres Budget als 1 Bildschirm-Frame ist hier
+            # bewusst OK (es wird ja nur ein statischer Platzhalter gezeichnet,
+            # 60 FPS sind fuer diesen Screen irrelevant) -- das reduziert den
+            # Python-Overhead durch haeufiges Umschalten zwischen Rechnen/Zeichnen.
+            budget = 0.1
             t0 = time.perf_counter()
             while time.perf_counter() - t0 < budget:
                 if self.trainer.generation_active:
@@ -216,14 +254,23 @@ class Dashboard:
                 else:
                     self.trainer.begin_generation()
         else:
+            # WICHTIG gegen Ruckeln: die Zug-Berechnung ist durch ein echtes
+            # ZEITBUDGET begrenzt (nicht durch eine feste Anzahl Zuege). Bei
+            # grosser Population/Bewertungstiefe kann ein einzelner Zug fuer die
+            # GESAMTE Population laenger dauern als ein 60-FPS-Frame lang ist --
+            # ohne dieses Budget wuerde das Zeichnen dann verzoegert und das Bild
+            # ruckeln. Mit dem Budget bleibt das Bild IMMER fluessig; im Zweifel
+            # faellt die tatsaechliche Zugrate hinter das eingestellte Tempo
+            # zurueck, statt dass das ganze Fenster stottert. Fuer wirklich volle
+            # Rechenleistung ohne Zeichnen gibt es den Turbo-Modus (Taste T).
             if not self.trainer.generation_active:
                 self.trainer.begin_generation()
             self.move_accum += dt
             interval = 1000.0 / SPEED_LEVELS[self.speed_idx]
-            steps = 0
-            while self.move_accum >= interval and steps < 200:
+            t0 = time.perf_counter()
+            step_budget = 0.012  # ca. 12ms -> laesst noch Zeit zum Zeichnen im 16.6ms-Frame
+            while self.move_accum >= interval and (time.perf_counter() - t0) < step_budget:
                 self.move_accum -= interval
-                steps += 1
                 if self.trainer.step_generation():
                     self._on_generation_end()
                     self.move_accum = 0.0
@@ -246,9 +293,11 @@ class Dashboard:
             ("Mutation", f"{MUTATION_PRESETS[self.mut_idx][0]}  (Rate {rate}, Stärke {strength})"),
             ("Früchte", str(FRUIT_OPTIONS[self.fruit_idx])),
             ("Sichtbare Schlangen", str(VISIBLE_OPTIONS[self.visible_idx])),
+            ("Bewertungstiefe", EPISODES_PRESETS[self.episodes_idx][0]),
+            ("Elite-Anteil", ELITISM_PRESETS[self.elitism_idx][0]),
             ("TRAINING STARTEN", None),
         ]
-        px, pw, row_h, gap, y0 = 300, 580, 52, 12, 200
+        px, pw, row_h, gap, y0 = 300, 580, 48, 10, 176
         for i, (label, value) in enumerate(entries):
             y = y0 + i * (row_h + gap)
             selected = (i == self.menu_row)
@@ -337,16 +386,31 @@ class Dashboard:
         cell_h = (GRID_H - (gr - 1) * 6) / gr
 
         elite = self.trainer.cfg.elitism
+
+        # Live-Fuehrender: welche der SICHTBAREN Schlangen hat gerade den
+        # hoechsten Score? Anders als der gruene Elite-Rahmen (= aus der LETZTEN
+        # Generation uebernommen) zeigt das, wer in DIESER laufenden Runde
+        # gerade vorne liegt.
+        visible_games = [self.trainer.games[i * k] for i in range(n)]
+        leader_idx = max(range(n), key=lambda i: visible_games[i].score) if n else -1
+
         for idx in range(n):
             r, c = divmod(idx, gc)
             x = GRID_X + c * (cell_w + 6)
             y = GRID_Y + r * (cell_h + 6)
-            self._draw_mini(self.trainer.games[idx * k],
+            self._draw_mini(visible_games[idx],
                             pygame.Rect(int(x), int(y), int(cell_w), int(cell_h)),
-                            is_elite=(idx < elite))
+                            is_elite=(idx < elite),
+                            is_leader=(idx == leader_idx and visible_games[idx].score > 0))
 
-    def _draw_mini(self, game, rect: pygame.Rect, is_elite: bool) -> None:
-        pygame.draw.rect(self.screen, MINI_BG, rect, border_radius=4)
+    def _draw_mini(self, game, rect: pygame.Rect, is_elite: bool, is_leader: bool = False) -> None:
+        # Abgerundete Ecken (border_radius) sind in pygame deutlich teurer als
+        # ein einfaches Rechteck. Bei sehr vielen kleinen Kacheln (grosse
+        # Populationen/viele sichtbare Schlangen) faellt das messbar ins
+        # Gewicht -- deshalb nur "abrunden", wenn die Kachel gross genug ist,
+        # dass man den Unterschied ueberhaupt sieht.
+        radius = 4 if rect.width > 60 else 0
+        pygame.draw.rect(self.screen, MINI_BG, rect, border_radius=radius)
         cw = rect.width / game.cols
         ch = rect.height / game.rows
         csize = max(1, int(math.ceil(min(cw, ch))))
@@ -362,13 +426,15 @@ class Dashboard:
             py = rect.y + sy * ch
             pygame.draw.rect(self.screen, color, (int(px), int(py), csize, csize))
 
-        if is_elite:
-            border = ELITE_BORDER
+        if is_leader:
+            border, width = LEADER_BORDER, 3
+        elif is_elite:
+            border, width = ELITE_BORDER, 2
         elif game.alive:
-            border = ALIVE_BORDER
+            border, width = ALIVE_BORDER, 2
         else:
-            border = DEAD_BORDER
-        pygame.draw.rect(self.screen, border, rect, width=2, border_radius=4)
+            border, width = DEAD_BORDER, 2
+        pygame.draw.rect(self.screen, border, rect, width=width, border_radius=radius)
 
         if rect.width > 70:
             sc = self.f_tiny.render(str(game.score), Palette.TEXT)
@@ -390,19 +456,28 @@ class Dashboard:
         if s is None:
             self._text(self.f_small, "Erste Generation laeuft ...", Palette.TEXT_DIM, x, y)
         else:
-            # Kennzahlenblock (zweispaltig).
+            # Kennzahlenblock (zweispaltig). "Champion Ø" ist die ROBUSTE Zahl
+            # (ueber episodes_per_genome Partien gemittelt) -- die zaehlt fuer
+            # echte Qualitaet, nicht eine einzelne Gluecks-Partie.
             col2 = PANEL_X + PANEL_W // 2 + 4
-            self._stat_pair(x, col2, y, "Bester Score", str(s.best_score),
-                            "Bestwert gesamt", str(s.alltime_best_score),
-                            Palette.ACCENT, CURVE_BEST)
+            self._stat_pair(x, col2, y, "Champion Ø", f"{s.best_avg_score:.2f}",
+                            "Beste Einzelpartie", str(s.best_score),
+                            Palette.ACCENT, Palette.TEXT_DIM)
             y += 54
             self._stat_pair(x, col2, y, "Ø Score", f"{s.mean_score:.2f}",
                             "Ø Länge", f"{s.mean_length:.1f}",
                             Palette.TEXT, Palette.TEXT)
             y += 54
+            eff_txt = f"{s.mean_steps_per_fruit:.1f}" if s.mean_steps_per_fruit is not None else "—"
             self._stat_pair(x, col2, y, "Ø Schritte", f"{s.mean_steps:.0f}",
-                            "Diversität", f"{s.diversity:.3f}",
+                            "Effizienz (Schr./Frucht)", eff_txt,
                             Palette.TEXT, Palette.TEXT)
+            y += 54
+            stag = s.generations_since_improvement
+            stag_color = STAGNATION_OK if stag < 15 else (STAGNATION_WARN if stag < 40 else STAGNATION_BAD)
+            self._stat_pair(x, col2, y, "Diversität", f"{s.diversity:.3f}",
+                            "Stagnation", f"{stag} Gen",
+                            Palette.TEXT, stag_color)
             y += 60
 
             # Todesursachen als Balken.
