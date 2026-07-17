@@ -264,7 +264,8 @@ class WatchApp:
         cp = self.checkpoint
         wall_txt = "Durchgang" if cp.get("wrap_walls", False) else "Tödlich"
         subtitle2 = (
-            f"Champion: {cp['score']} Punkte (Generation {cp['generation']})  ·  "
+            f"Champion: Ø {cp['score']:.1f} Punkte über {cp.get('episodes_per_genome', 1)} "
+            f"Partien (Generation {cp['generation']})  ·  "
             f"trainiert mit {cp.get('fruit_count', 1)} Frucht(en), Wand: {wall_txt}"
         )
         entries = [

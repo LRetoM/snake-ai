@@ -50,6 +50,16 @@ class EvolutionConfig:
     mutation_strength: float = 0.2   # Staerke der Mutation
     tournament_k: int = 4            # Auswahldruck bei der Selektion
 
+    # WICHTIG gegen Bewertung durch reines Zufallsglueck: jedes Genom spielt pro
+    # Generation nicht nur 1, sondern mehrere unabhaengige Partien mit jeweils
+    # eigenem zufaelligem Fruchtlayout. Die Fitness ist der DURCHSCHNITT ueber
+    # alle Partien. Ein Netz, das nur in einem einzigen (leichten) Fruchtlayout
+    # zufaellig gut abschneidet, aber in anderen Layouts versagt, wird so NICHT
+    # mehr hoch bewertet -- nur wer ueber verschiedene Situationen hinweg
+    # KONSISTENT gut ist, gilt als gut. Das ist der Hebel gegen "hat ein festes
+    # Muster auswendig gelernt" und fuer echte Generalisierung.
+    episodes_per_genome: int = 3
+
     # Spielumgebung fuers Training
     grid_cols: int = 20
     grid_rows: int = 20
@@ -61,9 +71,20 @@ class EvolutionConfig:
     max_steps: int = 1500                # harte Obergrenze pro Partie
 
     # Fitness-Gewichte: fitness = w_steps*Schritte + w_fruit*Fruechte + w_fruit_sq*Fruechte^2
+    #                            + Effizienz-Bonus (siehe unten)
     w_steps: float = 1.0
     w_fruit: float = 100.0
     w_fruit_sq: float = 120.0
+
+    # Effizienz-Bonus: belohnt KURZE Wege zur Frucht direkt, nicht nur "ueberlebt
+    # lange genug". Bei jeder gefressenen Frucht gibt es +w_efficiency/Schritte-
+    # seit-letzter-Frucht dazu -- je schneller die Frucht erreicht wurde, desto
+    # groesser der Bonus. Das ist ein ANDERER Hebel als der Verhungern-Timeout:
+    # der Timeout verhindert nur ewiges Nichtstun, belohnt aber nicht kuerzere
+    # Wege (2 Wege von 10 bzw. 60 Schritten geben ohne diesen Bonus die gleiche
+    # Fitness). Per A/B-Test bestaetigt: nur ein strengerer Timeout aendert die
+    # Schritte/Frucht-Effizienz NICHT, dieser direkte Bonus schon.
+    w_efficiency: float = 40.0
 
     # Sonstiges
     seed: int | None = None
@@ -79,6 +100,7 @@ class GameResult:
     length: int
     steps: int
     cause: str  # "wall" | "self" | "starvation" | "timeout" | "won"
+    steps_per_fruit: float | None = None  # Effizienz dieser einen Partie
 
 
 @dataclass
@@ -94,11 +116,17 @@ class GenerationStats:
     diversity: float
     deaths: dict = field(default_factory=dict)  # {wall, self, starvation, timeout, won}
     alltime_best_score: int = 0
+    mean_steps_per_fruit: float | None = None  # Effizienz-Kennzahl (niedriger = besser)
+    generations_since_improvement: int = 0     # Stagnations-Zaehler
+    best_avg_score: float = 0.0  # bestes GENOM, gemittelt ueber seine Episoden (robust)
 
 
-def compute_fitness(cfg: EvolutionConfig, steps: int, fruits: int) -> float:
-    """Fitness NUR aus Ueberlebenszeit + Punkten (keine Strategie-Hinweise)."""
-    return cfg.w_steps * steps + cfg.w_fruit * fruits + cfg.w_fruit_sq * (fruits ** 2)
+def compute_fitness(cfg: EvolutionConfig, steps: int, fruits: int, efficiency_bonus: float = 0.0) -> float:
+    """Fitness aus Ueberlebenszeit + Punkten + Effizienz-Bonus (keine Strategie-Hinweise:
+    der Bonus belohnt nur "wie schnell wurde JEDE gefressene Frucht erreicht", nicht
+    "in welche Richtung soll ich laufen" o.ae.)."""
+    return (cfg.w_steps * steps + cfg.w_fruit * fruits + cfg.w_fruit_sq * (fruits ** 2)
+            + efficiency_bonus)
 
 
 # --------------------------------------------------------------------------- #
@@ -126,12 +154,14 @@ class EvolutionTrainer:
         self.champion: dict | None = None  # {genome, score, fitness, generation}
         self.alltime_best_score = 0
         self.start_time = time.time()
+        self._last_improvement_gen = 0   # fuer den Stagnations-Zaehler
 
         # Live-Zustand der aktuell laufenden Generation (fuer das Dashboard).
         self.games: list[SnakeGame] = []
         self.policies: list[NumpyPolicy] = []
         self.dones: list[bool] = []
         self.results: list[GameResult | None] = []
+        self.efficiency_bonus: list[float] = []  # pro Individuum, waechst bei jeder Frucht
         self.generation_active = False
 
         # CSV-Log vorbereiten.
@@ -146,17 +176,30 @@ class EvolutionTrainer:
     # Schritt-fuer-Schritt-API (fuer das Live-Dashboard)
     # ------------------------------------------------------------------ #
     def begin_generation(self) -> None:
-        """Setzt fuer jedes Genom eine frische Partie auf (noch nicht gespielt)."""
+        """Setzt fuer jedes Genom MEHRERE frische Partien auf (noch nicht gespielt).
+
+        Jedes Genom bekommt `episodes_per_genome` unabhaengige Partien mit je
+        eigenem zufaelligem Fruchtlayout (siehe Kommentar bei
+        EvolutionConfig.episodes_per_genome). self.games/policies/dones/results/
+        efficiency_bonus sind dafuer FLACHE Listen der Laenge
+        population_size * episodes_per_genome; Eintraege [g*K:(g+1)*K] gehoeren
+        alle zu Genom g. end_generation() mittelt sie wieder pro Genom.
+        """
         self.games = []
         self.policies = []
         self.dones = []
-        self.results = [None] * self.cfg.population_size
+        k = self.cfg.episodes_per_genome
+        n_total = self.cfg.population_size * k
+        self.results = [None] * n_total
+        self.efficiency_bonus = [0.0] * n_total
 
         for genome in self.population.genomes:
-            game = SnakeGame(self._game_config(), rng=random.Random(self._next_seed()))
-            self.games.append(game)
-            self.policies.append(NumpyPolicy(genome, self.cfg.hidden))
-            self.dones.append(False)
+            policy = NumpyPolicy(genome, self.cfg.hidden)  # 1x pro Genom, fuer alle K Episoden geteilt
+            for _ in range(k):
+                game = SnakeGame(self._game_config(), rng=random.Random(self._next_seed()))
+                self.games.append(game)
+                self.policies.append(policy)
+                self.dones.append(False)
 
         self.generation_active = True
 
@@ -178,7 +221,14 @@ class EvolutionTrainer:
 
             obs = perceive(game)
             action = self.policies[i].act(obs)
+            steps_before = game.steps_since_fruit  # fuer den Effizienz-Bonus (siehe unten)
             result = game.step_action(Action(action))
+
+            if result.ate_fruit:
+                # Je weniger Schritte seit der letzten Frucht, desto groesser der
+                # Bonus -- das belohnt kurze Wege direkt, nicht nur "hat ueberlebt".
+                time_taken = steps_before + 1
+                self.efficiency_bonus[i] += cfg.w_efficiency / time_taken
 
             ended = False
             if not result.alive:
@@ -195,37 +245,61 @@ class EvolutionTrainer:
 
             if ended:
                 self.dones[i] = True
-                self.results[i] = self._make_result(game)
+                self.results[i] = self._make_result(game, self.efficiency_bonus[i])
             else:
                 all_done = False
 
         return all_done
 
     def end_generation(self) -> GenerationStats:
-        """Wertet die fertige Generation aus und zuechtet die naechste."""
-        fitnesses = np.array([r.fitness for r in self.results], dtype=np.float64)
-        stats = self._build_stats(fitnesses)
+        """Wertet die fertige Generation aus und zuechtet die naechste.
 
-        # Champion aktualisieren (bestes je gesehenes Netz nach Score, dann Fitness).
-        best_idx = int(np.argmax(fitnesses))
-        best_result = self.results[best_idx]
-        if (self.champion is None
-                or best_result.score > self.champion["score"]
-                or (best_result.score == self.champion["score"]
-                    and best_result.fitness > self.champion["fitness"])):
+        WICHTIG: Selektion und Champion-Kuer laufen auf dem GENOM-GEMITTELTEN
+        Ergebnis (Durchschnitt ueber episodes_per_genome Partien je Genom), nicht
+        auf einer einzelnen Partie. Das ist der Schutz gegen Zufallsglueck: ein
+        Genom, das nur in EINER von mehreren Partien gut abschneidet, aber sonst
+        versagt, hat einen niedrigen Durchschnitt und setzt sich nicht durch --
+        nur konsistent gute Genome werden Eltern der naechsten Generation.
+        """
+        k = self.cfg.episodes_per_genome
+        n_pop = self.cfg.population_size
+
+        genome_fitness = np.empty(n_pop, dtype=np.float64)
+        genome_score = np.empty(n_pop, dtype=np.float64)
+        for g in range(n_pop):
+            chunk = self.results[g * k:(g + 1) * k]
+            genome_fitness[g] = np.mean([r.fitness for r in chunk])
+            genome_score[g] = np.mean([r.score for r in chunk])
+
+        # Champion aktualisieren: bestes GENOM nach gemitteltem Score, dann Fitness.
+        best_idx = int(np.argmax(genome_fitness))
+        best_avg_score = float(genome_score[best_idx])
+        best_avg_fitness = float(genome_fitness[best_idx])
+        improved = (
+            self.champion is None
+            or best_avg_score > self.champion["score"]
+            or (best_avg_score == self.champion["score"] and best_avg_fitness > self.champion["fitness"])
+        )
+        if improved:
             self.champion = {
                 "genome": self.population.genomes[best_idx].copy(),
-                "score": best_result.score,
-                "fitness": float(best_result.fitness),
+                "score": best_avg_score,
+                "fitness": best_avg_fitness,
                 "generation": self.population.generation,
             }
             self._save_champion()
+            self._last_improvement_gen = self.population.generation
 
+        # Stagnations-Zaehler bezieht sich bewusst auf den ROBUSTEN Champion-
+        # Fortschritt (gemittelter Score), nicht auf eine einzelne Gluecks-Partie.
+        stagnation = self.population.generation - self._last_improvement_gen
+
+        stats = self._build_stats(genome_fitness, genome_score, stagnation)
         self.history.append(stats)
         self._log_csv(stats)
 
-        # Naechste Generation zuechten.
-        self.population.evolve(fitnesses)
+        # Naechste Generation zuechten -- Selektion nach gemittelter Fitness.
+        self.population.evolve(genome_fitness)
         self.generation_active = False
         return stats
 
@@ -254,16 +328,23 @@ class EvolutionTrainer:
         self._seed_counter += 1
         return self._seed_counter
 
-    def _make_result(self, game: SnakeGame) -> GameResult:
+    def _make_result(self, game: SnakeGame, efficiency_bonus: float) -> GameResult:
         return GameResult(
-            fitness=compute_fitness(self.cfg, game.steps, game.score),
+            fitness=compute_fitness(self.cfg, game.steps, game.score, efficiency_bonus),
             score=game.score,
             length=game.length,
             steps=game.steps,
             cause=game.death_cause or "timeout",
+            steps_per_fruit=(game.steps / game.score) if game.score > 0 else None,
         )
 
-    def _build_stats(self, fitnesses: np.ndarray) -> GenerationStats:
+    def _build_stats(
+        self, genome_fitness: np.ndarray, genome_score: np.ndarray, stagnation: int
+    ) -> GenerationStats:
+        """Baut die Anzeige-Statistik. genome_fitness/genome_score sind bereits pro
+        Genom ueber seine episodes_per_genome Partien gemittelt (robust); die
+        Verteilungs-Kennzahlen (mean_score, Todesursachen, Effizienz) laufen
+        dagegen ueber ALLE einzelnen Partien (self.results, mehr Stichproben)."""
         scores = np.array([r.score for r in self.results])
         lengths = np.array([r.length for r in self.results])
         steps = np.array([r.steps for r in self.results])
@@ -272,13 +353,21 @@ class EvolutionTrainer:
         for r in self.results:
             deaths[r.cause] = deaths.get(r.cause, 0) + 1
 
+        # "alltime_best_score" bleibt bewusst die rohe Einzelpartie-Bestmarke
+        # (zeigt die Ausnahme-Spitzenleistung); der ROBUSTE Fortschritt steckt
+        # im Champion (siehe best_avg_score) und im Stagnations-Zaehler.
         self.alltime_best_score = max(self.alltime_best_score, int(scores.max()))
+
+        # Effizienz: Schritte pro Frucht, gemittelt ueber alle Partien, die
+        # ueberhaupt mindestens 1 Frucht gefressen haben (niedriger = effizienter).
+        eff_values = [r.steps_per_fruit for r in self.results if r.steps_per_fruit is not None]
+        mean_eff = float(np.mean(eff_values)) if eff_values else None
 
         return GenerationStats(
             generation=self.population.generation,
-            best_fitness=float(fitnesses.max()),
-            mean_fitness=float(fitnesses.mean()),
-            median_fitness=float(np.median(fitnesses)),
+            best_fitness=float(genome_fitness.max()),
+            mean_fitness=float(genome_fitness.mean()),
+            median_fitness=float(np.median(genome_fitness)),
             best_score=int(scores.max()),
             mean_score=float(scores.mean()),
             mean_length=float(lengths.mean()),
@@ -286,6 +375,9 @@ class EvolutionTrainer:
             diversity=self.population.diversity(),
             deaths=deaths,
             alltime_best_score=self.alltime_best_score,
+            mean_steps_per_fruit=mean_eff,
+            generations_since_improvement=stagnation,
+            best_avg_score=float(genome_score.max()),
         )
 
     def _save_champion(self) -> None:
@@ -311,6 +403,7 @@ class EvolutionTrainer:
                 "grid_rows": self.cfg.grid_rows,
                 "fruit_count": self.cfg.fruit_count,
                 "wrap_walls": self.cfg.wrap_walls,
+                "episodes_per_genome": self.cfg.episodes_per_genome,
             },
             os.path.join(_MODEL_DIR, "evo_champion.pt"),
         )
@@ -333,6 +426,11 @@ class EvolutionTrainer:
             "deaths_starvation": stats.deaths["starvation"],
             "deaths_timeout": stats.deaths["timeout"],
             "alltime_best_score": stats.alltime_best_score,
+            "best_avg_score": round(stats.best_avg_score, 3),
+            "mean_steps_per_fruit": (
+                round(stats.mean_steps_per_fruit, 2) if stats.mean_steps_per_fruit is not None else ""
+            ),
+            "generations_since_improvement": stats.generations_since_improvement,
         }
         write_header = not self._csv_header_written
         with open(self._csv_path, "a", newline="", encoding="utf-8") as fh:
@@ -354,12 +452,13 @@ def main(generations: int = 30, cfg: EvolutionConfig | None = None) -> None:
     for _ in range(generations):
         stats = trainer.run_generation_fast()
         d = stats.deaths
-        print(f"Gen {stats.generation:3d} | bestScore {stats.best_score:2d} "
-              f"(alltime {stats.alltime_best_score:2d}) | meanScore {stats.mean_score:5.2f} | "
-              f"bestFit {stats.best_fitness:8.1f} | meanFit {stats.mean_fitness:7.1f} | "
-              f"div {stats.diversity:.3f} | "
+        eff = f"{stats.mean_steps_per_fruit:5.1f}" if stats.mean_steps_per_fruit is not None else "  n/a"
+        print(f"Gen {stats.generation:3d} | bestAvgScore {stats.best_avg_score:5.2f} "
+              f"(einzeln {stats.best_score:2d}, alltime {stats.alltime_best_score:2d}) | "
+              f"meanScore {stats.mean_score:5.2f} | Effizienz {eff} Schr/Frucht | "
+              f"stagn {stats.generations_since_improvement:3d} Gen | div {stats.diversity:.3f} | "
               f"Tod: Wand {d['wall']:3d} selbst {d['self']:3d} hunger {d['starvation']:3d}")
-    print(f"\nChampion: Score {trainer.champion['score']} in Gen {trainer.champion['generation']}")
+    print(f"\nChampion: Ø-Score {trainer.champion['score']:.2f} in Gen {trainer.champion['generation']}")
     print(f"Log: {trainer._csv_path}")
 
 

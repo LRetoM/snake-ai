@@ -320,20 +320,28 @@ class Dashboard:
                      Palette.TEXT_DIM, rect.centerx, rect.centery + 44)
 
     def _draw_grid(self) -> None:
+        # WICHTIG: self.trainer.games ist eine FLACHE Liste der Laenge
+        # population_size * episodes_per_genome (jedes Genom spielt mehrere
+        # Partien parallel, siehe EvolutionConfig.episodes_per_genome). Damit
+        # jede sichtbare Kachel ein ANDERES Genom zeigt (statt K-mal dasselbe),
+        # zeigen wir hier je Genom nur dessen ERSTE Episode (Index g*k).
         if not self.trainer or not self.trainer.games:
             return
-        n = self.visible_count
+        k = self.trainer.cfg.episodes_per_genome
+        n_genomes = self.trainer.cfg.population_size
+        n = min(self.visible_count, n_genomes)
+
         gc = math.ceil(math.sqrt(n * GRID_W / GRID_H))
         gr = math.ceil(n / gc)
         cell_w = (GRID_W - (gc - 1) * 6) / gc
         cell_h = (GRID_H - (gr - 1) * 6) / gr
 
         elite = self.trainer.cfg.elitism
-        for idx in range(min(n, len(self.trainer.games))):
+        for idx in range(n):
             r, c = divmod(idx, gc)
             x = GRID_X + c * (cell_w + 6)
             y = GRID_Y + r * (cell_h + 6)
-            self._draw_mini(self.trainer.games[idx],
+            self._draw_mini(self.trainer.games[idx * k],
                             pygame.Rect(int(x), int(y), int(cell_w), int(cell_h)),
                             is_elite=(idx < elite))
 
