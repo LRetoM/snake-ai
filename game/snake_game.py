@@ -163,6 +163,10 @@ class SnakeGame:
         self.steps_since_fruit = 0
         self.alive = True
         self.won = False
+        # Diagnose (nur fuers Training/Statistik): "wall" | "self" | "starvation" | None.
+        # "starvation" setzt der Trainer selbst (Verhungern-Timeout ist eine
+        # Trainings-Regel, keine Spielregel).
+        self.death_cause: str | None = None
 
         self.fruits = set()
         self._refill_fruits()
@@ -237,6 +241,7 @@ class SnakeGame:
             # Klassisch: ausserhalb des Feldes = Tod.
             if not (0 <= new_x < self.cols and 0 <= new_y < self.rows):
                 self.alive = False
+                self.death_cause = "wall"
                 return StepResult(False, False, False, self.score)
 
         new_head: Cell = (new_x, new_y)
@@ -252,6 +257,7 @@ class SnakeGame:
             occupied.discard(self.snake[-1])
         if new_head in occupied:
             self.alive = False
+            self.death_cause = "self"
             return StepResult(False, False, False, self.score)
 
         # 6) Bewegen: neuen Kopf vorne einfuegen.

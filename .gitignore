@@ -5,3 +5,4 @@ __pycache__/
 logs/*.csv
 logs/*.json
 models/*.pt
+models/*.npy
