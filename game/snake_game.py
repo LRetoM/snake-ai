@@ -1,0 +1,260 @@
+"""Reine Snake-Spiellogik -- OHNE pygame, ohne Grafik, ohne Tastatur.
+
+Das ist die "Umgebung" (Environment). Sie legt ALLE Regeln fest:
+Bewegung, Kollision, wo Fruechte spawnen, wann man stirbt. Grafik und Eingabe
+passieren woanders (renderer.py / play_human.py).
+
+Warum diese strikte Trennung? Spaeter soll die KI dieselbe Logik ohne Fenster
+tausende Male pro Sekunde durchrechnen. Deshalb darf hier nichts sein, das ein
+sichtbares Fenster braucht. Die KI bekommt spaeter nur:
+  - eine Wahrnehmung des Zustands (perception.py, kommt in Schritt 2)
+  - eine Aktion (geradeaus / links / rechts)
+  - Feedback (Punkte / Tod)
+... aber niemals Zugriff auf die Regeln selbst.
+
+Analogie: Das Spiel ist das "Brett mit Regeln". Ein Mensch (oder die KI) sieht
+nur das Brett und darf Zuege machen -- die Regeln aendern kann er nie.
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Direction(Enum):
+    """Die vier Bewegungsrichtungen als (dx, dy)-Vektor.
+
+    dx = Aenderung der Spalte, dy = Aenderung der Zeile.
+    Achtung: y zeigt nach UNTEN (wie bei Bildschirmkoordinaten ueblich),
+    deshalb ist UP = (0, -1).
+    """
+    UP = (0, -1)
+    DOWN = (0, 1)
+    LEFT = (-1, 0)
+    RIGHT = (1, 0)
+
+    @property
+    def opposite(self) -> "Direction":
+        """Gegenrichtung -- gebraucht, um 180-Grad-Wenden zu verbieten."""
+        dx, dy = self.value
+        return Direction((-dx, -dy))
+
+
+# Eine Position auf dem Gitter: (spalte, zeile).
+Cell = tuple[int, int]
+
+
+@dataclass
+class StepResult:
+    """Was bei einem Spielschritt passiert ist -- spaeter das Lernsignal der KI.
+
+    - alive:      lebt die Schlange nach diesem Schritt noch?
+    - ate_fruit:  wurde in diesem Schritt eine Frucht gefressen?
+    - won:        ist das Spielfeld komplett gefuellt (Sieg)?
+    - score:      aktueller Punktestand
+    """
+    alive: bool
+    ate_fruit: bool
+    won: bool
+    score: int
+
+
+class SnakeGame:
+    """Der Spielzustand + die Regeln. Kein Rendering, keine Eingabe.
+
+    Typischer Ablauf:
+        game = SnakeGame(config)
+        game.reset()
+        game.change_direction(Direction.UP)   # Wunschrichtung setzen
+        result = game.step()                   # einen Schritt weiterrechnen
+    """
+
+    def __init__(self, config, rng: random.Random | None = None) -> None:
+        # config hat u.a. grid_cols, grid_rows, fruit_count, wrap_walls.
+        self.cols = config.grid_cols
+        self.rows = config.grid_rows
+        self.fruit_count = max(1, config.fruit_count)
+        self.wrap_walls = config.wrap_walls
+
+        # Eigener Zufallsgenerator -> spaeter reproduzierbar (Seed) fuers Training.
+        self.rng = rng or random.Random()
+
+        # Felder werden in reset() gefuellt; hier nur angekuendigt.
+        self.snake: list[Cell] = []
+        self.direction: Direction = Direction.RIGHT
+        self.fruits: set[Cell] = set()
+        self.score: int = 0
+        self.steps: int = 0             # Anzahl gemachter Schritte (Ueberlebenszeit)
+        self.steps_since_fruit: int = 0  # gegen "im Kreis laufen" (spaeter fuer KI)
+        self.alive: bool = True
+        self.won: bool = False
+
+        # Kleiner Eingabepuffer: erlaubt bis zu 2 schnell hintereinander
+        # gedrueckte Richtungswechsel, ohne dass Eingaben "verschluckt" werden.
+        self._turn_queue: list[Direction] = []
+
+        self.reset()
+
+    # ------------------------------------------------------------------ #
+    # Auf- und Zuruecksetzen
+    # ------------------------------------------------------------------ #
+    def reset(self) -> None:
+        """Setzt eine frische Runde auf: Schlange in der Mitte, Fruechte gespawnt."""
+        mid_x = self.cols // 2
+        mid_y = self.rows // 2
+
+        # Schlange der Laenge 3, waagerecht, Kopf rechts. Reihenfolge:
+        # snake[0] = Kopf, snake[-1] = Schwanzende.
+        self.snake = [
+            (mid_x, mid_y),
+            (mid_x - 1, mid_y),
+            (mid_x - 2, mid_y),
+        ]
+        self.direction = Direction.RIGHT
+        self._turn_queue.clear()
+
+        self.score = 0
+        self.steps = 0
+        self.steps_since_fruit = 0
+        self.alive = True
+        self.won = False
+
+        self.fruits = set()
+        self._refill_fruits()
+
+    # ------------------------------------------------------------------ #
+    # Eingabe: Wunschrichtung setzen
+    # ------------------------------------------------------------------ #
+    def change_direction(self, new_direction: Direction) -> None:
+        """Legt die naechste Richtung fest (fuer menschliche Steuerung).
+
+        Die Richtung wird gepuffert und erst beim naechsten step() angewandt.
+        Das verhindert einen klassischen Snake-Bug: Wenn man in EINEM Frame
+        schnell z.B. 'hoch' dann 'links' drueckt, wuerde ohne Puffer sonst der
+        letzte Tastendruck die Pruefung austricksen und man laeuft in sich selbst.
+        """
+        # Referenzrichtung ist die letzte bereits eingereihte Richtung
+        # (oder die aktuelle, falls die Warteschlange leer ist).
+        reference = self._turn_queue[-1] if self._turn_queue else self.direction
+
+        # Kein 180-Grad-Wende (waere sofortiger Selbstmord) und keine
+        # sinnlose Wiederholung derselben Richtung.
+        if new_direction == reference or new_direction == reference.opposite:
+            return
+
+        # Maximal 2 Wechsel vormerken -> bleibt reaktionsschnell, ohne zu stauen.
+        if len(self._turn_queue) < 2:
+            self._turn_queue.append(new_direction)
+
+    # ------------------------------------------------------------------ #
+    # Ein Spielschritt
+    # ------------------------------------------------------------------ #
+    def step(self) -> StepResult:
+        """Rechnet die Schlange genau einen Schritt weiter und wendet Regeln an."""
+        if not self.alive or self.won:
+            return StepResult(self.alive, False, self.won, self.score)
+
+        # 1) Naechste gepufferte Richtung uebernehmen (falls vorhanden).
+        if self._turn_queue:
+            self.direction = self._turn_queue.pop(0)
+
+        # 2) Neue Kopfposition berechnen.
+        head_x, head_y = self.snake[0]
+        dx, dy = self.direction.value
+        new_x, new_y = head_x + dx, head_y + dy
+
+        # 3) Waende behandeln.
+        if self.wrap_walls:
+            # Durchgang: modulo laesst die Schlange auf der anderen Seite rauskommen.
+            new_x %= self.cols
+            new_y %= self.rows
+        else:
+            # Klassisch: ausserhalb des Feldes = Tod.
+            if not (0 <= new_x < self.cols and 0 <= new_y < self.rows):
+                self.alive = False
+                return StepResult(False, False, False, self.score)
+
+        new_head: Cell = (new_x, new_y)
+
+        # 4) Wird gefressen? Dann waechst die Schlange (Schwanz bleibt).
+        will_eat = new_head in self.fruits
+
+        # 5) Selbstkollision pruefen.
+        #    Wenn NICHT gefressen wird, rueckt der Schwanz eine Zelle weiter --
+        #    die aktuelle Schwanzzelle wird also frei und darf betreten werden.
+        occupied = set(self.snake)
+        if not will_eat:
+            occupied.discard(self.snake[-1])
+        if new_head in occupied:
+            self.alive = False
+            return StepResult(False, False, False, self.score)
+
+        # 6) Bewegen: neuen Kopf vorne einfuegen.
+        self.snake.insert(0, new_head)
+
+        self.steps += 1
+        ate_fruit = False
+
+        if will_eat:
+            # Frucht gefressen: Punkt gutschreiben, Frucht entfernen, neue nachlegen.
+            self.fruits.discard(new_head)
+            self.score += 1
+            self.steps_since_fruit = 0
+            ate_fruit = True
+            self._refill_fruits()
+        else:
+            # Nicht gefressen: Schwanzende entfernen -> Schlange bleibt gleich lang.
+            self.snake.pop()
+            self.steps_since_fruit += 1
+
+        # 7) Sieg? Wenn kein freies Feld mehr existiert, ist alles voll -> gewonnen.
+        if len(self.snake) >= self.cols * self.rows:
+            self.won = True
+            return StepResult(True, ate_fruit, True, self.score)
+
+        return StepResult(True, ate_fruit, False, self.score)
+
+    # ------------------------------------------------------------------ #
+    # Fruechte
+    # ------------------------------------------------------------------ #
+    def _refill_fruits(self) -> None:
+        """Legt so viele Fruechte nach, bis wieder fruit_count auf dem Feld sind.
+
+        Fruechte spawnen NUR auf freien Zellen (nicht auf der Schlange und nicht
+        auf einer bereits liegenden Frucht). Gibt es keine freie Zelle mehr, wird
+        einfach keine gelegt (dann ist das Feld praktisch voll -> Sieg naht).
+        """
+        blocked = set(self.snake) | self.fruits
+        free_cells = [
+            (x, y)
+            for x in range(self.cols)
+            for y in range(self.rows)
+            if (x, y) not in blocked
+        ]
+
+        while len(self.fruits) < self.fruit_count and free_cells:
+            choice = self.rng.choice(free_cells)
+            free_cells.remove(choice)
+            self.fruits.add(choice)
+
+    # ------------------------------------------------------------------ #
+    # Praktische Helfer (fuer Renderer & spaeter fuer die Wahrnehmung der KI)
+    # ------------------------------------------------------------------ #
+    @property
+    def head(self) -> Cell:
+        """Aktuelle Kopfposition."""
+        return self.snake[0]
+
+    @property
+    def length(self) -> int:
+        """Aktuelle Laenge der Schlange (= Anzahl Segmente)."""
+        return len(self.snake)
+
+    def is_cell_free(self, cell: Cell) -> bool:
+        """True, wenn die Zelle innerhalb des Feldes und nicht von der Schlange belegt ist."""
+        x, y = cell
+        if not (0 <= x < self.cols and 0 <= y < self.rows):
+            return False
+        return cell not in set(self.snake)
