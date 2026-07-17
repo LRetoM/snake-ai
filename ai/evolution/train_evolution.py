@@ -17,6 +17,7 @@ Verantwortlich fuer:
 from __future__ import annotations
 
 import csv
+import json
 import os
 import random
 import time
@@ -27,10 +28,17 @@ import numpy as np
 from game.config import GameConfig
 from game.snake_game import Action, SnakeGame
 from ai.perception import perceive
-from ai.network import DEFAULT_HIDDEN, NumpyPolicy, genome_to_net
+from ai.network import DEFAULT_HIDDEN, NumpyPolicy
 from ai.evolution.population import Population
 
-import torch
+# WICHTIG: Kein "import torch" hier! Dieser Trainer muss auch unter PyPy3 laufen
+# (5-10x schnellere Neuroevolution durch JIT), und PyPy hat unter Windows keine
+# fertigen PyTorch-Wheels. Der Champion wird deshalb hier NUR als rohes NumPy-
+# Genom + JSON-Metadaten gespeichert (torch-frei). Wer PyTorch zur Verfuegung
+# hat (normales CPython), bekommt zusaetzlich automatisch die .pt-Datei -- das
+# uebernimmt ai/torch_bridge.py, per Lazy-Import nur bei Bedarf (siehe
+# _save_champion unten). Ohne Torch einfach separat `python build_champion.py`
+# ausfuehren, um die .pt-Datei aus dem gespeicherten Genom zu bauen.
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 _LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
@@ -399,33 +407,43 @@ class EvolutionTrainer:
         )
 
     def _save_champion(self) -> None:
-        """Speichert das bisher beste Netz im PyTorch-Format + als Genom.
+        """Speichert das bisher beste Netz -- torch-frei als Genom + Metadaten.
 
         Wichtig: Die Umgebungs-Einstellungen (Fruchtanzahl, Wandmodus, Feldgroesse)
         werden MIT gespeichert. So kann eine spaetere "KI zuschauen"-Ansicht die
         Schlange fair unter genau den Bedingungen testen, unter denen sie
         trainiert wurde -- ein Champion, der mit 3 Fruechten gezuechtet wurde,
         soll nicht ploetzlich mit nur 1 Frucht bewertet werden.
+
+        Das kanonische, torch-freie Format ist evo_champion_genome.npy +
+        evo_champion_meta.json (funktioniert auch unter PyPy ohne PyTorch).
+        Zusaetzlich wird -- falls PyTorch in dieser Umgebung verfuegbar ist --
+        gleich die evo_champion.pt gebaut, die watch_ai.py/Dashboard erwarten.
+        Ist PyTorch nicht da (z.B. Training laeuft unter PyPy), einfach danach
+        einmalig `python build_champion.py` mit normalem Python ausfuehren.
         """
         if self.champion is None:
             return
         os.makedirs(_MODEL_DIR, exist_ok=True)
-        net = genome_to_net(self.champion["genome"], self.cfg.hidden)
-        torch.save(
-            {
-                "state_dict": net.state_dict(),
-                "hidden": self.cfg.hidden,
-                "score": self.champion["score"],
-                "generation": self.champion["generation"],
-                "grid_cols": self.cfg.grid_cols,
-                "grid_rows": self.cfg.grid_rows,
-                "fruit_count": self.cfg.fruit_count,
-                "wrap_walls": self.cfg.wrap_walls,
-                "episodes_per_genome": self.cfg.episodes_per_genome,
-            },
-            os.path.join(_MODEL_DIR, "evo_champion.pt"),
-        )
+        meta = {
+            "hidden": list(self.cfg.hidden),
+            "score": self.champion["score"],
+            "generation": self.champion["generation"],
+            "grid_cols": self.cfg.grid_cols,
+            "grid_rows": self.cfg.grid_rows,
+            "fruit_count": self.cfg.fruit_count,
+            "wrap_walls": self.cfg.wrap_walls,
+            "episodes_per_genome": self.cfg.episodes_per_genome,
+        }
         np.save(os.path.join(_MODEL_DIR, "evo_champion_genome.npy"), self.champion["genome"])
+        with open(os.path.join(_MODEL_DIR, "evo_champion_meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2)
+
+        try:
+            from ai.torch_bridge import save_champion_checkpoint
+        except ImportError:
+            return  # kein PyTorch hier (z.B. PyPy) -- .pt-Datei folgt per build_champion.py
+        save_champion_checkpoint(self.champion["genome"], meta, _MODEL_DIR)
 
     def _log_csv(self, stats: GenerationStats) -> None:
         if not self._csv_path:

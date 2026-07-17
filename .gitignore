@@ -6,3 +6,4 @@ logs/*.csv
 logs/*.json
 models/*.pt
 models/*.npy
+models/*.json

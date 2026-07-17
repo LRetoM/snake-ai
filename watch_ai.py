@@ -33,7 +33,7 @@ from game.config import (
 )
 from game.renderer import Renderer
 from game.snake_game import Action, SnakeGame
-from ai.network import SnakeNet
+from ai.torch_bridge import SnakeNet
 from ai.perception import perceive
 
 FPS = 60
