@@ -42,6 +42,39 @@ class Direction(Enum):
         return Direction((-dx, -dy))
 
 
+class Action(Enum):
+    """Die drei Aktionen, die die KI waehlen kann -- RELATIV zur Blickrichtung.
+
+    Das ist die einzige Sprache, in der die KI mit dem Spiel spricht. Sie denkt
+    nicht in Himmelsrichtungen ("nach oben"), sondern wie ein Autofahrer:
+    geradeaus, links abbiegen oder rechts abbiegen. Dadurch gibt es hier auch
+    gar keine 180-Grad-Wende -- ein Selbstmord-Zug ist strukturell unmoeglich.
+    """
+    STRAIGHT = 0
+    LEFT = 1
+    RIGHT = 2
+
+
+# Die vier Richtungen im Uhrzeigersinn. Damit lassen sich relative Drehungen
+# ("rechts" = ein Schritt im Uhrzeigersinn) einfach ausrechnen.
+_CLOCKWISE = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+
+
+def relative_turn(direction: "Direction", action: "Action") -> "Direction":
+    """Rechnet eine relative Aktion in eine absolute Richtung um.
+
+    Beispiel: schaut die Schlange nach oben (UP) und die Aktion ist RIGHT,
+    dann ist die neue Richtung RIGHT (rechts). Schaut sie nach RIGHT und die
+    Aktion ist RIGHT, wird daraus DOWN -- usw. im Uhrzeigersinn.
+    """
+    i = _CLOCKWISE.index(direction)
+    if action == Action.RIGHT:
+        i = (i + 1) % 4        # ein Schritt im Uhrzeigersinn
+    elif action == Action.LEFT:
+        i = (i - 1) % 4        # ein Schritt gegen den Uhrzeigersinn
+    return _CLOCKWISE[i]       # STRAIGHT -> unveraendert
+
+
 # Eine Position auf dem Gitter: (spalte, zeile).
 Cell = tuple[int, int]
 
@@ -147,6 +180,20 @@ class SnakeGame:
         # Maximal 2 Wechsel vormerken -> bleibt reaktionsschnell, ohne zu stauen.
         if len(self._turn_queue) < 2:
             self._turn_queue.append(new_direction)
+
+    # ------------------------------------------------------------------ #
+    # Ein Spielschritt -- KI-Variante (relative Aktion)
+    # ------------------------------------------------------------------ #
+    def step_action(self, action: Action) -> StepResult:
+        """Fuehrt EINEN Schritt mit einer relativen Aktion aus (fuer die KI).
+
+        Waehrend `change_direction()` + `step()` fuer die Menschsteuerung gedacht
+        sind (absolute Richtung, gepuffert), setzt die KI ihre Richtung direkt
+        ueber geradeaus/links/rechts. Ein 180-Grad-Selbstmord ist damit unmoeglich.
+        """
+        self.direction = relative_turn(self.direction, action)
+        self._turn_queue.clear()  # evtl. gepufferte Menscheneingaben verwerfen
+        return self.step()
 
     # ------------------------------------------------------------------ #
     # Ein Spielschritt
@@ -258,3 +305,25 @@ class SnakeGame:
         if not (0 <= x < self.cols and 0 <= y < self.rows):
             return False
         return cell not in set(self.snake)
+
+    def is_deadly(self, cell: Cell) -> bool:
+        """True, wenn ein Zug auf diese Zelle die Schlange toeten wuerde.
+
+        Das ist ein reiner Wahrnehmungs-Helfer fuer perception.py: Er spiegelt
+        exakt die Todesregel aus step() wider (Wand ODER Koerper -- ausser dem
+        Schwanzende, das im naechsten Schritt sowieso wegrueckt). Die KI SIEHT
+        damit nur "da vorne ist Gefahr" -- so wie ein Mensch die Wand sieht.
+        Sie erfaehrt NICHT, was sie tun soll; das muss sie selbst lernen.
+        """
+        x, y = cell
+        if self.wrap_walls:
+            # Durchgang: eine Wand kann man nicht "treffen", man kommt hindurch.
+            cell = (x % self.cols, y % self.rows)
+        else:
+            if not (0 <= x < self.cols and 0 <= y < self.rows):
+                return True  # ausserhalb des Feldes = toedlich
+
+        # Koerper pruefen; das Schwanzende wird als frei behandelt (rueckt weg).
+        body = set(self.snake)
+        body.discard(self.snake[-1])
+        return cell in body
