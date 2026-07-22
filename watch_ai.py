@@ -34,10 +34,20 @@ from game.config import (
 from game.renderer import Renderer
 from game.snake_game import Action, SnakeGame
 from ai.torch_bridge import SnakeNet
-from ai.perception import perceive
+from ai.perception import get_perception
 
 FPS = 60
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "evo_champion.pt")
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+# Beide KIs koennen hier zuschauen -- sie teilen sich das Speicherformat, aber
+# nicht ihr Wissen. Aufruf: "python watch_ai.py" (Neuroevolution, Standard)
+# oder "python watch_ai.py dqn" (Deep Q-Learning).
+_MODELS = {
+    "evo": (os.path.join(_MODEL_DIR, "evo_champion.pt"),
+            "Neuroevolution-Champion spielt selbst", "train_evolution.py"),
+    "dqn": (os.path.join(_MODEL_DIR, "dqn_champion.pt"),
+            "Deep-Q-Learning-Champion spielt selbst", "train_dqn.py"),
+}
+_MODEL_PATH = _MODELS["evo"][0]
 
 # Wichtig: Das SPIEL selbst kennt KEINE "Verhungern"-Regel -- das ist bewusst so
 # (Leitplanke: die KI-Trainingsregeln duerfen keine Spielregeln sein). Beim
@@ -57,18 +67,23 @@ def load_champion(path: str = _MODEL_PATH) -> tuple[SnakeNet, dict]:
     trainiert wurde -- statt mit einem kryptischen Absturz.
     """
     if not os.path.exists(path):
+        train_cmd = next((cmd for p, _t, cmd in _MODELS.values() if p == path),
+                         "train_evolution.py")
         print(
             "Kein trainierter Champion gefunden.\n"
             f"  Erwartet unter: {path}\n\n"
-            "Starte zuerst ein Training, z.B.:\n"
-            "  python train_evolution.py\n"
-            "(im Dashboard mindestens ein paar Generationen laufen lassen,\n"
-            "der beste Bot wird automatisch gespeichert)."
+            "Starte zuerst ein Training:\n"
+            f"  python {train_cmd}\n"
+            "(im Dashboard eine Weile laufen lassen -- der beste Bot wird\n"
+            "automatisch gespeichert)."
         )
         sys.exit(1)
 
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    net = SnakeNet(hidden=checkpoint["hidden"])
+    # Aeltere Checkpoints (Neuroevolution) haben diese Angaben nicht -- dann
+    # gilt die einfache 11er-Wahrnehmung, mit der sie trainiert wurden.
+    input_size = int(checkpoint.get("input_size", 11))
+    net = SnakeNet(hidden=checkpoint["hidden"], input_size=input_size)
     net.load_state_dict(checkpoint["state_dict"])
     net.eval()  # nur Inferenz -- kein Training, keine Gradienten noetig
     return net, checkpoint
@@ -83,14 +98,19 @@ class WatchApp:
     GAME_OVER = "GAME_OVER"
     WIN = "WIN"
 
-    def __init__(self) -> None:
+    def __init__(self, which: str = "evo") -> None:
         pygame.init()
         pygame.display.set_caption("Snake — KI zuschauen")
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
 
-        self.net, self.checkpoint = load_champion()
+        path, self.headline, self.train_cmd = _MODELS[which]
+        self.net, self.checkpoint = load_champion(path)
+        # Welche Wahrnehmung will dieses Netz gefuettert bekommen? Steht im
+        # Checkpoint (aeltere kennen nur die einfache).
+        self.perceive, _size, _labels = get_perception(
+            self.checkpoint.get("perception", "simple"))
 
         # Einzige Einstellung im Menue: Anzeige-Geschwindigkeit. Fruchtanzahl/
         # Wandmodus kommen bewusst FEST aus dem Checkpoint -- so wird die KI
@@ -204,9 +224,9 @@ class WatchApp:
             self.move_accumulator -= self.move_interval_ms
             self.prev_snake = list(self.game.snake)
 
-            # Die KI "sieht" nur die 11 Wahrnehmungszahlen -- wie ein Mensch nur
+            # Die KI "sieht" nur ihre Wahrnehmungszahlen -- wie ein Mensch nur
             # den Bildschirm sieht, nicht den Code.
-            observation = perceive(self.game)
+            observation = self.perceive(self.game)
             with torch.no_grad():
                 output = self.net(torch.from_numpy(observation))
             action = Action(int(torch.argmax(output).item()))
@@ -263,9 +283,17 @@ class WatchApp:
     def _draw_menu(self) -> None:
         cp = self.checkpoint
         wall_txt = "Durchgang" if cp.get("wrap_walls", False) else "Tödlich"
+        if "generation" in cp:
+            herkunft = (f"Ø {cp['score']:.1f} Punkte über "
+                        f"{cp.get('episodes_per_genome', 1)} Partien "
+                        f"(Generation {cp['generation']})")
+        else:
+            # DQN: der Champion ist der beste PRUEFUNGS-Durchschnitt.
+            herkunft = (f"Prüfung Ø {cp.get('eval_mean', cp.get('score', 0)):.1f} "
+                        f"über {cp.get('eval_episodes', '?')} Partien  ·  "
+                        f"{cp.get('total_episodes', 0)} Episoden trainiert")
         subtitle2 = (
-            f"Champion: Ø {cp['score']:.1f} Punkte über {cp.get('episodes_per_genome', 1)} "
-            f"Partien (Generation {cp['generation']})  ·  "
+            f"Champion: {herkunft}  ·  "
             f"trainiert mit {cp.get('fruit_count', 1)} Frucht(en), Wand: {wall_txt}"
         )
         entries = [
@@ -281,7 +309,13 @@ class WatchApp:
 
 
 def main() -> None:
-    WatchApp().run()
+    # "python watch_ai.py"      -> Neuroevolution-Champion
+    # "python watch_ai.py dqn"  -> Deep-Q-Learning-Champion
+    which = sys.argv[1].lower() if len(sys.argv) > 1 else "evo"
+    if which not in _MODELS:
+        print(f"Unbekannt: '{which}'. Moeglich: {', '.join(_MODELS)}")
+        sys.exit(1)
+    WatchApp(which).run()
 
 
 if __name__ == "__main__":

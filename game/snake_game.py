@@ -338,6 +338,17 @@ class SnakeGame:
         """Aktuelle Laenge der Schlange (= Anzahl Segmente)."""
         return len(self.snake)
 
+    @property
+    def occupied(self) -> set:
+        """Alle aktuell von der Schlange belegten Zellen (Lesezugriff).
+
+        Nur ein schneller Wahrnehmungs-Helfer: perception.py "tastet" damit in
+        alle Richtungen, ohne bei jeder Abfrage ein neues Set zu bauen. Enthaelt
+        keine Regel und keine Strategie -- es ist dieselbe Information, die man
+        auch auf dem Bildschirm sieht (wo liegt der Koerper).
+        """
+        return self._occupied
+
     def is_cell_free(self, cell: Cell) -> bool:
         """True, wenn die Zelle innerhalb des Feldes und nicht von der Schlange belegt ist."""
         x, y = cell

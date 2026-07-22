@@ -56,6 +56,7 @@ nicht nur bequem, sondern auch deutlich schneller als 5 Einzelaufrufe.
 from __future__ import annotations
 
 import os
+import time
 
 import numpy as np
 import torch
@@ -78,18 +79,67 @@ def pick_device() -> torch.device:
     return torch.device("cpu")
 
 
+def tune_threads(input_size: int, hidden, batch_size: int) -> int:
+    """Misst kurz, mit wie vielen CPU-Threads ein Lernschritt am schnellsten ist.
+
+    Warum ueberhaupt? Ein Lernschritt ist eine Matrizenrechnung. PyTorch kann die
+    auf mehrere Kerne verteilen -- das lohnt sich aber nur, wenn die Rechnung
+    gross genug ist. Bei unseren kleinen Netzen verbringen viele Threads mehr
+    Zeit mit Absprache als mit Rechnen. Welche Zahl gewinnt, haengt vom Rechner
+    ab (Mac vs. Windows-Laptop koennen sich um das Fuenffache unterscheiden),
+    also probieren wir es einmal in unter einer Sekunde aus, statt zu raten.
+    """
+    if torch.cuda.is_available():
+        return torch.get_num_threads()   # auf der Grafikkarte irrelevant
+
+    import os as _os
+    max_threads = min(8, _os.cpu_count() or 1)
+    candidates = sorted({1, 2, 4, max_threads})
+    x = torch.randn(batch_size, input_size)
+    target = torch.randn(batch_size, OUTPUT_SIZE)
+
+    best_threads, best_time = 1, float("inf")
+    for n in candidates:
+        torch.set_num_threads(n)
+        net = SnakeNet(hidden, input_size)
+        opt = torch.optim.Adam(net.parameters(), lr=1e-3)
+        for _ in range(3):                      # warmlaufen
+            opt.zero_grad(); F.mse_loss(net(x), target).backward(); opt.step()
+        t0 = time.perf_counter()
+        for _ in range(12):
+            opt.zero_grad(); F.mse_loss(net(x), target).backward(); opt.step()
+        dt = time.perf_counter() - t0
+        if dt < best_time:
+            best_threads, best_time = n, dt
+
+    torch.set_num_threads(best_threads)
+    return best_threads
+
+
 class DQNAgent:
     """Haelt beide Netze (policy + target), den Optimierer und die Lernlogik."""
 
-    def __init__(self, cfg, seed: int | None = None) -> None:
+    def __init__(self, cfg, input_size: int, seed: int | None = None) -> None:
         self.cfg = cfg
+        self.input_size = input_size
         self.device = pick_device()
         self.rng = np.random.default_rng(seed)
 
+        # Wie viele CPU-Threads soll PyTorch benutzen? Das ist der mit Abstand
+        # groesste Geschwindigkeits-Hebel und je nach Rechner voellig
+        # unterschiedlich: mal ist 1 Thread am schnellsten (kleine Netze, die
+        # Abstimmung zwischen Threads kostet mehr als sie bringt), mal 4.
+        # Deshalb wird es bei torch_threads=0 einmalig GEMESSEN statt geraten.
+        if cfg.torch_threads:
+            torch.set_num_threads(int(cfg.torch_threads))
+        else:
+            self.threads = tune_threads(input_size, cfg.hidden, cfg.batch_size)
+        self.threads = torch.get_num_threads()
+
         # policy_net = das Netz, das entscheidet UND trainiert wird.
-        self.policy_net = SnakeNet(cfg.hidden).to(self.device)
+        self.policy_net = SnakeNet(cfg.hidden, input_size).to(self.device)
         # target_net = die eingefrorene Kopie, die nur das Lernziel liefert.
-        self.target_net = SnakeNet(cfg.hidden).to(self.device)
+        self.target_net = SnakeNet(cfg.hidden, input_size).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()  # wird nie direkt trainiert
 
@@ -108,7 +158,7 @@ class DQNAgent:
     def act_batch(self, states: np.ndarray, epsilon: float) -> np.ndarray:
         """Waehlt fuer ALLE Spiele gleichzeitig eine Aktion (epsilon-greedy).
 
-        states: Array der Form (anzahl_spiele, 11).
+        states: Array der Form (anzahl_spiele, Wahrnehmungsgroesse).
         Rueckgabe: Array mit einem Aktionsindex (0/1/2) pro Spiel.
 
         `torch.no_grad()` heisst: "nur ausrechnen, nichts zum spaeteren Lernen
@@ -144,13 +194,16 @@ class DQNAgent:
 
         last_loss = None
         for _ in range(cfg.train_iters_per_step):
-            states, actions, rewards, next_states, dones = buffer.sample(cfg.batch_size)
+            (states, actions, rewards, next_states, dones,
+             discounts, indices, weights) = buffer.sample(cfg.batch_size)
 
             s = torch.from_numpy(states).to(self.device)
             a = torch.from_numpy(actions).to(self.device)
             r = torch.from_numpy(rewards).to(self.device)
             s2 = torch.from_numpy(next_states).to(self.device)
             d = torch.from_numpy(dones).to(self.device)
+            disc = torch.from_numpy(discounts).to(self.device)
+            w = torch.from_numpy(weights).to(self.device)
 
             # 1) Was schaetzt das Netz AKTUELL fuer die damals gewaehlte Aktion?
             #    gather() pickt aus den 3 Q-Werten genau den zur Aktion passenden.
@@ -169,14 +222,22 @@ class DQNAgent:
                 else:
                     q_next = self.target_net(s2).max(dim=1).values
 
+                # `disc` statt cfg.gamma: bei n-Schritt-Ketten ist die Belohnung
+                # schon ueber mehrere Zuege zusammengefasst, der Sprung in die
+                # Zukunft ist also gamma^n gross (und am Partie-Ende kuerzer).
                 # (1 - d): war die Partie zu Ende, gibt es KEINE Zukunft mehr --
                 # dann ist der wahre Wert einfach die Belohnung selbst.
-                q_target = r + cfg.gamma * q_next * (1.0 - d)
+                q_target = r + disc * q_next * (1.0 - d)
 
             # 3) Wie falsch lag das Netz? Huber-/SmoothL1-Loss ist gegenueber
             #    einzelnen Ausreissern robuster als der quadratische Fehler --
             #    ein ungluecklicher -10-Ausreisser reisst das Training nicht um.
-            loss = F.smooth_l1_loss(q_pred, q_target)
+            #    `w` gewichtet die Eintraege: beim priorisierten Tagebuch zaehlen
+            #    haeufig gezogene Erinnerungen entsprechend weniger (sonst waere
+            #    das Weltbild der KI verzerrt, siehe memory.py).
+            td_error = q_target - q_pred
+            elementwise = F.smooth_l1_loss(q_pred, q_target, reduction="none")
+            loss = (w * elementwise).mean()
 
             # 4) Regler nachjustieren (Gradientenabstieg).
             self.optimizer.zero_grad(set_to_none=True)
@@ -190,11 +251,23 @@ class DQNAgent:
             self.learn_steps += 1
             last_loss = float(loss.item())
 
-            # 5) Ab und zu die Zielscheibe neu aufstellen.
+            # 5) Dem Tagebuch zurueckmelden, wie ueberraschend jede Erinnerung
+            #    war -- damit die lehrreichen oefter gezogen werden.
+            buffer.update_priorities(indices, td_error.detach().cpu().numpy())
+
+            # 6) Ab und zu die Zielscheibe neu aufstellen.
             if self.learn_steps % cfg.target_update == 0:
                 self.target_net.load_state_dict(self.policy_net.state_dict())
 
         return last_loss
+
+    # ------------------------------------------------------------------ #
+    # Vorhandenes Gehirn weiterverwenden
+    # ------------------------------------------------------------------ #
+    def load_state_dict(self, state_dict) -> None:
+        """Uebernimmt gespeicherte Gewichte in BEIDE Netze (Weitertrainieren)."""
+        self.policy_net.load_state_dict(state_dict)
+        self.target_net.load_state_dict(state_dict)
 
     # ------------------------------------------------------------------ #
     # Speichern / Laden
@@ -209,6 +282,10 @@ class DQNAgent:
         payload = {
             "state_dict": self.policy_net.state_dict(),
             "hidden": tuple(self.cfg.hidden),
+            # Ohne diese beiden Angaben wuesste ein Zuschau-Programm spaeter
+            # nicht, mit welcher Wahrnehmung das Netz gefuettert werden will.
+            "input_size": self.input_size,
+            "perception": self.cfg.perception,
         }
         payload.update(meta)
         torch.save(payload, path)

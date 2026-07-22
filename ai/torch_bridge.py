@@ -23,13 +23,22 @@ from ai.perception import INPUT_SIZE
 
 
 class SnakeNet(nn.Module):
-    """Dasselbe Netz als PyTorch-Modul: 11 -> hidden... -> 3, tanh in den Hidden."""
+    """Dasselbe Netz als PyTorch-Modul: N -> hidden... -> 3, tanh in den Hidden.
 
-    def __init__(self, hidden: tuple[int, ...] = DEFAULT_HIDDEN) -> None:
+    `input_size` ist normalerweise 11 (die Standard-Wahrnehmung, die auch die
+    Neuroevolution benutzt). Das DQN kann optional mit einer REICHEREN
+    Wahrnehmung laufen (ai/perception.py, `perceive_rich`) -- dafuer muss die
+    Eingangsschicht groesser sein. Deshalb ist die Groesse hier einstellbar,
+    mit dem alten Wert als Standard: bestehende Checkpoints laden unveraendert.
+    """
+
+    def __init__(self, hidden: tuple[int, ...] = DEFAULT_HIDDEN,
+                 input_size: int = INPUT_SIZE) -> None:
         super().__init__()
         self.hidden = tuple(hidden)
+        self.input_size = int(input_size)
         layers = []
-        prev = INPUT_SIZE
+        prev = self.input_size
         for h in hidden:
             layers.append(nn.Linear(prev, h))
             prev = h
