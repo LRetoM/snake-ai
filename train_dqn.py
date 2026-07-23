@@ -11,6 +11,10 @@ Start OHNE Fenster (maximaler Lern-Durchsatz, z.B. ueber Nacht):
         (Brett-Transfer: baut auf dem Champion des Standard-Bretts auf,
          trainiert aber auf dem angegebenen Brett weiter -- siehe
          TRAININGSPLAN.md Abschnitt B3/S0.4 fuers Klein->Gross-Curriculum)
+    python train_dqn.py --headless 480 --wahrnehmung rich_grid7
+        (frischer Lauf mit einer ANDEREN Wahrnehmung als dem Code-Standard
+         "rich" -- ohne das landet ein frischer Headless-Lauf immer bei
+         "rich", weil Headless kein Menue hat)
 
 Der Unterschied: ohne Fenster faellt das Zeichnen komplett weg -- je nach
 Rechner sind das nochmal 10-30% mehr Zuege pro Sekunde als der Turbo-Modus im
@@ -77,7 +81,8 @@ def _resolve_resume_path(target_cols: int, target_rows: int):
     return None
 
 
-def run_headless(minutes: float, resume: bool, brett: str | None = None) -> None:
+def run_headless(minutes: float, resume: bool, brett: str | None = None,
+                  wahrnehmung: str | None = None) -> None:
     """Trainiert ohne jede Grafik und meldet den Fortschritt in der Konsole."""
     from ai.dqn.trainer import MultiGameTrainer, load_champion_config
 
@@ -96,6 +101,12 @@ def run_headless(minutes: float, resume: bool, brett: str | None = None) -> None
         cfg = DQNConfig()
     board_transfer = (cfg.grid_cols, cfg.grid_rows) != (target_cols, target_rows)
     cfg.grid_cols, cfg.grid_rows = target_cols, target_rows
+    # Ohne --wahrnehmung wuerde ein frischer Headless-Lauf immer beim
+    # Code-Standard ("rich") landen -- das Fenster-Menue erlaubt zwar eine
+    # andere Wahl (z.B. "rich_grid7"), aber Headless hat kein Menue. Mit
+    # dieser Option muss man dafuer nicht extra das Fenster oeffnen.
+    if wahrnehmung:
+        cfg.perception = wahrnehmung
 
     trainer = MultiGameTrainer(cfg, log_to_csv=True, resume_from=resume_path)
 
@@ -165,13 +176,23 @@ def main() -> None:
                              "Transfer, siehe TRAININGSPLAN.md). Nur im "
                              "--headless-Modus; im Fenster gibt es dafuer "
                              "die Menue-Zeile 'Brettgroesse'.")
+    parser.add_argument("--wahrnehmung", metavar="NAME",
+                        help="Wahrnehmung fuer einen FRISCHEN Headless-Lauf, "
+                             "z.B. rich_grid7 (siehe ai/perception.py fuer "
+                             "alle Namen) -- ohne das landet ein frischer "
+                             "Headless-Lauf immer beim Code-Standard 'rich'. "
+                             "Nur im --headless-Modus; im Fenster gibt es "
+                             "dafuer die Menue-Zeile 'Wahrnehmung'.")
     args = parser.parse_args()
 
     if args.headless:
-        run_headless(args.headless, args.weiter, args.brett)
+        run_headless(args.headless, args.weiter, args.brett, args.wahrnehmung)
     elif args.brett:
         raise SystemExit("--brett wird nur mit --headless unterstuetzt -- "
                           "im Fenster die Menue-Zeile 'Brettgroesse' benutzen.")
+    elif args.wahrnehmung:
+        raise SystemExit("--wahrnehmung wird nur mit --headless unterstuetzt -- "
+                          "im Fenster die Menue-Zeile 'Wahrnehmung' benutzen.")
     else:
         from dashboard.dqn_view import main as run_dashboard
         run_dashboard(resume=args.weiter)
