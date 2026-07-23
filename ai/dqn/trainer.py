@@ -172,6 +172,27 @@ class MultiGameTrainer:
         self.eval_points: list[int] = []
         self._next_eval_at = cfg.eval_every_episodes
         self.champion_path: str | None = None
+
+        # ---- Weitertrainieren: Zaehler + Neugier aus dem Checkpoint holen -- #
+        # OHNE das hier wuerde jeder --weiter-Lauf so tun, als waere der Bot
+        # frisch: Rekord auf 0, und -- viel schlimmer -- Neugier wieder auf
+        # 100% Zufall (cfg.eps_start). Ein bereits gutes Netz wuerde dann erst
+        # einmal minutenlang mit Zufallszuegen weitertrainiert und dabei aktiv
+        # wieder verschlechtert, BEVOR die erste Pruefung ueberhaupt laeuft.
+        # Stattdessen: Ticks/Episoden/Rekord uebernehmen und die Neugier aus den
+        # uebernommenen Ticks neu berechnen (dieselbe Formel wie in step()) --
+        # ist genug Erfahrung schon gesammelt, kommt dabei von selbst eine
+        # niedrige Neugier heraus, statt dass wir sie erraten muessten.
+        if self.resumed_from:
+            meta = self._resume_meta
+            self.total_steps = int(meta.get("total_steps", 0))
+            self.total_episodes = int(meta.get("total_episodes", 0))
+            self.best_score = int(meta.get("best_train_score", meta.get("score", 0)))
+            self.eval_best = float(meta.get("eval_mean", meta.get("score", 0.0)))
+            self.eval_max = int(meta.get("score", 0))
+            progress = min(1.0, self.total_steps / max(1, cfg.eps_decay_steps))
+            self.epsilon = cfg.eps_start + (cfg.eps_end - cfg.eps_start) * progress
+
         # Eigene Spiele fuer die Pruefung, damit das laufende Training nicht
         # gestoert wird (die Trainings-Partien laufen einfach weiter).
         self._eval_games = [
@@ -209,6 +230,7 @@ class MultiGameTrainer:
             raise ValueError("Der gespeicherte Bot hat eine andere Netzgroesse.")
         self.agent.load_state_dict(checkpoint["state_dict"])
         self.resumed_from = path
+        self._resume_meta = checkpoint
 
     # ================================================================== #
     # Ein Trainings-Tick: alle Spiele machen EINEN Zug, dann wird gelernt
@@ -395,6 +417,12 @@ class MultiGameTrainer:
                 "grid_rows": cfg.grid_rows,
                 "fruit_count": cfg.fruit_count,
                 "wrap_walls": cfg.wrap_walls,
+                "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                # Die kompletten Einstellungen dieses Laufs -- damit man beim
+                # naechsten "--weiter" (oder einfach beim Nachschauen) sieht,
+                # womit dieser Champion trainiert wurde, ohne im CSV-Log
+                # danach suchen zu muessen.
+                "full_config": {k: v for k, v in vars(cfg).items()},
             },
         )
 
