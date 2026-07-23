@@ -44,7 +44,7 @@ import pygame
 from game.config import Palette
 from game.fonts import load_font
 from ai.dqn.config import DQNConfig
-from ai.dqn.trainer import CHAMPION_PATH, DQNStats, MultiGameTrainer
+from ai.dqn.trainer import CHAMPION_PATH, DQNStats, MultiGameTrainer, load_champion_config
 
 # ----------------------------- Fenster-Layout ------------------------------ #
 WIN_W, WIN_H = 1360, 900
@@ -104,7 +104,7 @@ class DQNDashboard:
     MENU = "MENU"
     RUNNING = "RUNNING"
 
-    def __init__(self, cfg: DQNConfig | None = None) -> None:
+    def __init__(self, cfg: DQNConfig | None = None, resume: bool = False) -> None:
         pygame.init()
         pygame.display.set_caption("Snake — Deep Q-Learning Training")
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
@@ -118,19 +118,15 @@ class DQNDashboard:
         self.f_small = load_font(14, "regular")
         self.f_tiny = load_font(11, "regular")
 
-        self.base_cfg = cfg or DQNConfig()
-
-        # Menue-Auswahl mit den Werten aus der Config als Startpunkt.
-        self.games_idx = _index_of(NUM_GAMES_OPTIONS, self.base_cfg.num_games, 5)
-        self.perc_idx = _preset_index(PERCEPTION_PRESETS, self.base_cfg.perception, 0)
-        self.hidden_idx = _preset_index(HIDDEN_PRESETS, tuple(self.base_cfg.hidden), 1)
-        self.lr_idx = _preset_index(LR_PRESETS, self.base_cfg.learning_rate, 1)
-        self.eps_idx = _preset_index(EPS_PRESETS, self.base_cfg.eps_decay_steps, 1)
-        self.gamma_idx = _preset_index(GAMMA_PRESETS, self.base_cfg.gamma, 1)
-        self.nstep_idx = _preset_index(NSTEP_PRESETS, self.base_cfg.n_step, 1)
-        self.fruit_idx = self.base_cfg.fruit_count - 1
-        self.per_on = self.base_cfg.prioritized
-        self.resume_on = False
+        # "--weiter" beim Start: die Menue-Regler sollen dann EXAKT die
+        # Einstellungen des gespeicherten Champions zeigen, nicht die
+        # Code-Standardwerte -- sonst waere ein Weitertrainieren aus dem
+        # Fenster heraus inkonsistent zu dem, was den Champion stark gemacht
+        # hat (siehe load_champion_config in ai/dqn/trainer.py).
+        champion_cfg = load_champion_config() if resume else None
+        self.base_cfg = champion_cfg or cfg or DQNConfig()
+        self._sync_menu_from_config(self.base_cfg)
+        self.resume_on = champion_cfg is not None
         self.menu_row = 0
         self.menu_error: str | None = None
 
@@ -173,6 +169,23 @@ class DQNDashboard:
                     self._on_run_key(event.key)
 
     # --------------------------- Menue -------------------------------- #
+    def _sync_menu_from_config(self, cfg: DQNConfig) -> None:
+        """Stellt alle Menue-Regler auf die Werte aus `cfg` (z.B. vom Champion).
+
+        Presets treffen einen Custom-Wert nicht immer exakt (z.B. wenn cfg
+        per Hand in config.py abweichend gesetzt wurde) -- dann greift der
+        naechstliegende Fallback der jeweiligen Preset-Liste.
+        """
+        self.games_idx = _index_of(NUM_GAMES_OPTIONS, cfg.num_games, 5)
+        self.perc_idx = _preset_index(PERCEPTION_PRESETS, cfg.perception, 0)
+        self.hidden_idx = _preset_index(HIDDEN_PRESETS, tuple(cfg.hidden), 1)
+        self.lr_idx = _preset_index(LR_PRESETS, cfg.learning_rate, 1)
+        self.eps_idx = _preset_index(EPS_PRESETS, cfg.eps_decay_steps, 1)
+        self.gamma_idx = _preset_index(GAMMA_PRESETS, cfg.gamma, 1)
+        self.nstep_idx = _preset_index(NSTEP_PRESETS, cfg.n_step, 1)
+        self.fruit_idx = cfg.fruit_count - 1
+        self.per_on = cfg.prioritized
+
     def _menu_entries(self) -> list[tuple[str, str | None, str]]:
         entries: list[tuple[str, str | None, str]] = []
         if self.trainer is not None:
@@ -238,7 +251,15 @@ class DQNDashboard:
         elif kind == "fruit":
             self.fruit_idx = (self.fruit_idx + delta) % len(FRUIT_OPTIONS)
         elif kind == "cont":
-            self.resume_on = not self.resume_on and os.path.exists(CHAMPION_PATH)
+            turning_on = not self.resume_on and os.path.exists(CHAMPION_PATH)
+            self.resume_on = turning_on
+            if turning_on:
+                # Weitertrainieren = Config exakt wie beim Champion-Run, nicht
+                # die gerade im Menue eingestellten (evtl. abweichenden) Werte.
+                champion_cfg = load_champion_config()
+                if champion_cfg is not None:
+                    self.base_cfg = champion_cfg
+                    self._sync_menu_from_config(champion_cfg)
 
     # ------------------------- Laufendes Training --------------------- #
     def _on_run_key(self, key: int) -> None:
@@ -597,8 +618,8 @@ def _preset_index(presets: list[tuple], value, fallback: int) -> int:
     return fallback
 
 
-def main(cfg: DQNConfig | None = None) -> None:
-    DQNDashboard(cfg).run()
+def main(cfg: DQNConfig | None = None, resume: bool = False) -> None:
+    DQNDashboard(cfg, resume=resume).run()
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ import os
 import random
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 import numpy as np
 
@@ -62,6 +62,32 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 MODEL_DIR = os.path.join(_ROOT, "models")
 LOG_DIR = os.path.join(_ROOT, "logs")
 CHAMPION_PATH = os.path.join(MODEL_DIR, "dqn_champion.pt")
+
+
+def load_champion_config(path: str = CHAMPION_PATH) -> DQNConfig | None:
+    """Laedt die EXAKTEN Einstellungen, mit denen der gespeicherte Champion
+    trainiert wurde (siehe "full_config" in `_save_champion`).
+
+    Ohne das wuerde jedes Weitertrainieren (CLI --weiter wie das Menue-Haekchen
+    "Champion weitertrainieren") wieder mit den Code-Standardwerten aus
+    config.py starten, obwohl der Champion vielleicht mit ganz anderen Werten
+    (Netzgroesse, Lernrate, Fruechte, ...) gezuechtet wurde -- das Weiter-
+    trainieren waere dann inkonsistent zu dem, was ihn tatsaechlich stark
+    gemacht hat. Gibt None zurueck, wenn (noch) kein Champion existiert.
+    """
+    if not os.path.exists(path):
+        return None
+    import torch
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    full_config = checkpoint.get("full_config")
+    if not full_config:
+        return None
+    # Nur bekannte Felder uebernehmen -- robust, falls DQNConfig sich seither
+    # geaendert hat (neue Felder fehlen im alten Checkpoint, alte entfernte
+    # Felder werden ignoriert statt einen TypeError zu werfen).
+    valid_fields = {f.name for f in fields(DQNConfig)}
+    kwargs = {k: v for k, v in full_config.items() if k in valid_fields}
+    return DQNConfig(**kwargs)
 
 
 @dataclass
@@ -192,6 +218,24 @@ class MultiGameTrainer:
             self.eval_max = int(meta.get("score", 0))
             progress = min(1.0, self.total_steps / max(1, cfg.eps_decay_steps))
             self.epsilon = cfg.eps_start + (cfg.eps_end - cfg.eps_start) * progress
+
+        # ---- Bestehenden Champion NIE mit einem schlechteren ueberschreiben - #
+        # Das gilt auch bei einem FRISCHEN Lauf (kein --weiter): ohne diese
+        # Pruefung startet eval_best dort bei 0, und die allererste Pruefung
+        # mit eval_mean > 0 wuerde models/dqn_champion.pt sofort mit einem kaum
+        # trainierten Netz ueberschreiben -- ein bereits starker Champion (z.B.
+        # Pruefung 75) waere dann unwiderruflich weg. Der Datei-Wert ist deshalb
+        # IMMER die Untergrenze, egal ob dieser Lauf neu startet oder weiter-
+        # trainiert (bei --weiter ist es ohnehin derselbe Wert wie oben, also
+        # ein No-Op).
+        if os.path.exists(CHAMPION_PATH):
+            try:
+                import torch
+                existing = torch.load(CHAMPION_PATH, map_location="cpu", weights_only=False)
+                existing_best = float(existing.get("eval_mean", existing.get("score", 0.0)))
+                self.eval_best = max(self.eval_best, existing_best)
+            except Exception:
+                pass
 
         # Eigene Spiele fuer die Pruefung, damit das laufende Training nicht
         # gestoert wird (die Trainings-Partien laufen einfach weiter).

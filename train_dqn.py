@@ -40,18 +40,24 @@ from ai.dqn.config import DQNConfig
 
 def run_headless(minutes: float, resume: bool) -> None:
     """Trainiert ohne jede Grafik und meldet den Fortschritt in der Konsole."""
-    from ai.dqn.trainer import CHAMPION_PATH, MultiGameTrainer
+    from ai.dqn.trainer import CHAMPION_PATH, MultiGameTrainer, load_champion_config
     import os
 
-    cfg = DQNConfig()
     resume_path = CHAMPION_PATH if (resume and os.path.exists(CHAMPION_PATH)) else None
+    # Weitertrainieren heisst: auch die Einstellungen exakt so uebernehmen, mit
+    # denen dieser Champion gezuechtet wurde -- sonst wuerden Netzgroesse,
+    # Lernrate, Fruechte etc. wieder auf die Code-Standardwerte zurueckfallen,
+    # obwohl der Champion vielleicht ganz anders (und besser) eingestellt war.
+    cfg = load_champion_config() if resume_path else None
+    if cfg is None:
+        cfg = DQNConfig()
     trainer = MultiGameTrainer(cfg, log_to_csv=True, resume_from=resume_path)
 
     print(f"Wahrnehmung: {cfg.perception} ({trainer.input_size} Werte)   "
           f"Netz: {cfg.hidden}   Spiele: {cfg.num_games}   "
           f"Threads: {trainer.agent.threads}")
     if resume_path:
-        print(f"Weitertrainiert auf: {resume_path}")
+        print(f"Weitertrainiert auf: {resume_path}  (Einstellungen vom Champion uebernommen)")
     print(f"Laeuft {minutes:g} Minuten. Abbrechen mit Strg+C.\n")
 
     t_end = time.perf_counter() + minutes * 60
@@ -99,7 +105,7 @@ def main() -> None:
         run_headless(args.headless, args.weiter)
     else:
         from dashboard.dqn_view import main as run_dashboard
-        run_dashboard(DQNConfig())
+        run_dashboard(resume=args.weiter)
 
 
 if __name__ == "__main__":
