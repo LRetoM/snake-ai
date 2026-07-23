@@ -1,8 +1,12 @@
 """Wahrnehmung: verwandelt den Spielzustand in einen Zahlen-Vektor fuer die KI.
 
-Das ist die "Sinnesorgan"-Schicht. Die KI bekommt NIE das ganze Spielfeld oder
-gar den Code -- sie bekommt nur diese wenigen Zahlen, so wie ein Mensch nur den
-Bildschirm sieht (und nicht den Programmcode dahinter).
+Das ist die "Sinnesorgan"-Schicht. Die KI bekommt NIE den Code oder eine
+fertige Loesung -- sie bekommt nur Zahlen, die beschreiben, was gerade "zu
+sehen" ist. Mal ein kleiner Ausschnitt (8 Tast-Strahlen, ein Fenster um den
+Kopf), mal ("full_board") das komplette Feld -- genau wie ein Mensch beim
+Spielen ja auch den GANZEN Bildschirm sieht, nicht nur einen Ausschnitt davon.
+Voll sehen zu duerfen ist also erlaubt; die Grenze verlaeuft nicht bei "wie
+viel sieht sie", sondern bei "rechnet der CODE ihr etwas vor" (siehe unten).
 
 Von BEIDEN KIs benutzt (Neuroevolution und DQN), aber beide lernen daraus voellig
 eigenstaendig -- geteilt wird nur das Werkzeug, nicht das Wissen.
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from game.config import GRID_COLS, GRID_ROWS
 from game.snake_game import Action, Direction, SnakeGame, relative_turn
 
 # Anzahl der Eingangswerte -- das neuronale Netz wird genau so viele Eingaenge haben.
@@ -254,15 +259,193 @@ def perceive_rich(game: SnakeGame) -> np.ndarray:
     )
 
 
-# Register: Name -> (Funktion, Anzahl Eingangswerte). Der DQN-Trainer sucht sich
-# ueber ai/dqn/config.py `perception` eine davon aus; die Neuroevolution benutzt
-# unveraendert immer die einfache. So bleiben beide KIs unabhaengig, und wir
-# koennen spaeter eine dritte Wahrnehmung ergaenzen, ohne irgendwo sonst etwas
-# zu aendern.
+# =========================================================================== #
+# NAHBEREICHS-KARTE ("rich_gridN") -- gegen das Selbst-Einsperr-Plateau
+# =========================================================================== #
+# Warum reicht "rich" (die 8 Tast-Strahlen) allein nicht?
+#
+# Jeder Strahl meldet nur die NAECHSTE Koerperzelle in einer geraden Linie.
+# Legt sich der Koerper aber wie eine Spirale um den Kopf, "sieht" keiner der
+# 8 Strahlen die Windungen ZWISCHEN sich -- die KI merkt die Falle oft erst,
+# wenn sie schon fast drin sitzt. Genau das zeigen die Zahlen im Dashboard:
+# bei langer Schlange sind >50% aller Tode Selbstkollisionen, obwohl die
+# Pruefung laengst nicht mehr steigt (Plateau).
+#
+# Die Nahbereichs-Karte gibt der KI echtes "peripheres Sehen" statt nur
+# Antennen in 8 Linien: ein window x window Ausschnitt der naeheren
+# Umgebung, egozentrisch gedreht (vorne = oben, wie beim Rest der reichen
+# Wahrnehmung). Jede Zelle bekommt nur EINEN Sinneswert (leer/eigener
+# Koerper/Frucht/Wand) -- nach wie vor reine Wahrnehmung. KEIN Flood-Fill,
+# KEINE berechnete "wie viel Platz habe ich noch"-Kennzahl -- das waere
+# eine ausgerechnete Heuristik, die der KI die Loesung des Einsperr-
+# Problems vorwegnaehme. Sie muss selbst lernen, welche Muster gefaehrlich
+# sind, wir geben ihr nur schaerfere Augen.
+#
+# Groesser = mehr Vorwarnzeit vor entfernteren Spiralen, aber mehr Eingaenge
+# (window**2 zusaetzliche Werte) -> groesseres Netz, langsameres Training.
+# Deshalb mehrere Groessen registriert (5/7/9) statt nur einer festen Wahl --
+# das laesst sich im Menue/config.py direkt gegeneinander austesten.
+
+def _local_grid(game: SnakeGame, window: int) -> list[float]:
+    """window x window Zellen um den Kopf, egozentrisch (vorne = oben).
+
+    Zeilen laufen von ganz vorne zu ganz hinten, Spalten von ganz links zu
+    ganz rechts (aus Sicht der Schlange) -- dieselbe Zeilenweise-Reihenfolge
+    wie man ein Blatt Papier liest. Werte: 0.0 = leer, 1.0 = eigener Koerper,
+    0.5 = Frucht, -1.0 = Wand (nur ohne Durchgangs-Modus; die Kopfzelle selbst
+    ist immer 0.0, sie enthaelt keine Information).
+    """
+    half = window // 2
+    head_x, head_y = game.head
+    fx, fy = game.direction.value
+    rx, ry = -fy, fx
+
+    occupied = game.occupied
+    fruits = game.fruits
+    cols, rows = game.cols, game.rows
+
+    cells: list[float] = []
+    for fwd in range(half, -half - 1, -1):
+        for right in range(-half, half + 1):
+            if fwd == 0 and right == 0:
+                cells.append(0.0)
+                continue
+            x = head_x + fwd * fx + right * rx
+            y = head_y + fwd * fy + right * ry
+            if not (0 <= x < cols and 0 <= y < rows):
+                if game.wrap_walls:
+                    x %= cols
+                    y %= rows
+                else:
+                    cells.append(-1.0)
+                    continue
+            cell = (x, y)
+            if cell in occupied:
+                cells.append(1.0)
+            elif cell in fruits:
+                cells.append(0.5)
+            else:
+                cells.append(0.0)
+    return cells
+
+
+def make_rich_grid_perception(window: int):
+    """Baut eine Wahrnehmungsfunktion: die reichen 39 Werte + eine window x
+    window Nahbereichs-Karte (siehe `_local_grid`). Gibt (Funktion,
+    Eingangsgroesse, Klartext-Labels) zurueck -- passend zum PERCEPTIONS-Format.
+    """
+    half = window // 2
+    grid_labels = [
+        f"Nah vorne{fwd:+d}/rechts{right:+d}"
+        for fwd in range(half, -half - 1, -1)
+        for right in range(-half, half + 1)
+    ]
+    labels = list(RICH_FEATURE_LABELS) + grid_labels
+    input_size = RICH_INPUT_SIZE + window * window
+
+    def perceive_rich_grid(game: SnakeGame) -> np.ndarray:
+        base = perceive_rich(game)
+        grid = np.array(_local_grid(game, window), dtype=np.float32)
+        return np.concatenate([base, grid])
+
+    return perceive_rich_grid, input_size, labels
+
+
+# =========================================================================== #
+# VOLLE FELD-SICHT ("full_board")
+# =========================================================================== #
+# Die konsequente Fortsetzung der Nahbereichs-Karte: statt eines Ausschnitts
+# rund um den Kopf sieht die KI hier das GESAMTE Spielfeld auf einen Blick --
+# wie ein Mensch, der beim Spielen ja auch den ganzen Bildschirm vor sich hat,
+# nicht nur ein Guckloch. Jede Feldzelle bekommt genau EINEN Sinneswert (leer/
+# eigener Koerper/Frucht) -- weiterhin reine Wahrnehmung, kein Flood-Fill,
+# keine berechnete Kennzahl "wie sicher ist dieser Weg". Ob und wie sie daraus
+# lernt, sich selbst nicht mehr einzusperren, muss sie weiterhin durch
+# Erfahrung selbst herausfinden -- wir oeffnen ihr nur die Augen, wir spielen
+# nicht fuer sie.
+#
+# Anders als bei den Nahbereichs-Fenstern (egozentrisch gedreht, "vorne oben")
+# bleibt das volle Feld in FESTER Ausrichtung (so wie es auf dem Bildschirm
+# liegt) -- eine Drehung eines ganzen Rechtecks um einen beliebigen Kopfpunkt
+# wuerde nicht mehr sauber ins Raster passen. Deshalb bekommt die KI hier
+# zusaetzlich ihre absolute Kopfposition UND Blickrichtung mit (bei den
+# kleinen Fenstern unnoetig, weil "vorne" durch die Drehung schon feststand).
+# Fruchtrichtung/Schwanzrichtung (wie bei "rich") sind hier ueberfluessig --
+# beides liegt ja bereits sichtbar im Feld selbst.
+#
+# Nimmt an, dass grid_cols/grid_rows den Standardwerten aus game/config.py
+# entsprechen (20x20) -- so gross ist das Netz bereits beim Start festgelegt.
+# Wer die Feldgroesse per Hand in DQNConfig aendert, muss diese Konstanten
+# hier mitziehen (kein Menue-Regler dafuer, siehe game_cfg in trainer.py).
+FULL_BOARD_INPUT_SIZE = 11 + GRID_COLS * GRID_ROWS
+
+FULL_BOARD_LABELS = (
+    ["Gefahr geradeaus", "Gefahr rechts", "Gefahr links",
+     "Richtung: oben", "Richtung: rechts", "Richtung: unten", "Richtung: links",
+     "Kopf x (normiert)", "Kopf y (normiert)", "Laenge", "Hunger"]
+    + [f"Feld ({x},{y})" for y in range(GRID_ROWS) for x in range(GRID_COLS)]
+)
+
+
+def perceive_full_board(game: SnakeGame) -> np.ndarray:
+    """Volle Feld-Sicht: 11 Basiswerte + eine Zelle pro Feldposition.
+
+    Aufbau:
+      0-2   Gefahr geradeaus / rechts / links (wie ueberall sonst)
+      3-6   aktuelle Blickrichtung (one-hot, absolut)
+      7-8   Kopfposition x/y, normiert auf 0..1
+      9     Laenge der Schlange (0..1, anteilig am Spielfeld)
+      10    Hunger: Schritte seit der letzten Frucht (0..1, bei ~500 gedeckelt)
+      11+   das ganze Feld, zeilenweise (y dann x): 0.0 leer, 1.0 eigener
+            Koerper, 0.5 Frucht
+    """
+    head_x, head_y = game.head
+    direction = game.direction
+    cols, rows = game.cols, game.rows
+
+    candidate_cells = []
+    for action in (Action.STRAIGHT, Action.RIGHT, Action.LEFT):
+        dx, dy = relative_turn(direction, action).value
+        candidate_cells.append((head_x + dx, head_y + dy))
+    danger = [1.0 if flag else 0.0 for flag in game.danger_flags(candidate_cells)]
+
+    dir_onehot = [
+        1.0 if direction == Direction.UP else 0.0,
+        1.0 if direction == Direction.RIGHT else 0.0,
+        1.0 if direction == Direction.DOWN else 0.0,
+        1.0 if direction == Direction.LEFT else 0.0,
+    ]
+
+    length_norm = game.length / float(cols * rows)
+    hunger = min(1.0, game.steps_since_fruit / 500.0)
+
+    board = [0.0] * (cols * rows)
+    for (x, y) in game.occupied:
+        board[y * cols + x] = 1.0
+    for (x, y) in game.fruits:
+        board[y * cols + x] = 0.5
+
+    return np.array(
+        danger + dir_onehot
+        + [head_x / cols, head_y / rows, length_norm, hunger]
+        + board,
+        dtype=np.float32,
+    )
+
+
+# Register: Name -> (Funktion, Anzahl Eingangswerte, Labels). Der DQN-Trainer
+# sucht sich ueber ai/dqn/config.py `perception` eine davon aus; die
+# Neuroevolution benutzt unveraendert immer die einfache. So bleiben beide KIs
+# unabhaengig, und wir koennen jederzeit eine weitere Wahrnehmung ergaenzen,
+# ohne irgendwo sonst etwas zu aendern.
 PERCEPTIONS = {
     "simple": (perceive, INPUT_SIZE, FEATURE_LABELS),
     "rich": (perceive_rich, RICH_INPUT_SIZE, RICH_FEATURE_LABELS),
+    "full_board": (perceive_full_board, FULL_BOARD_INPUT_SIZE, FULL_BOARD_LABELS),
 }
+for _window in (5, 7, 9):
+    PERCEPTIONS[f"rich_grid{_window}"] = make_rich_grid_perception(_window)
+del _window
 
 
 def get_perception(name: str):
@@ -276,11 +459,13 @@ def get_perception(name: str):
 def describe(vector: np.ndarray) -> str:
     """Menschenlesbare Beschreibung eines Wahrnehmungsvektors (fuers Verstehen).
 
-    Erkennt automatisch, ob es die einfache (11) oder die reiche (39) ist.
+    Erkennt die passenden Labels automatisch anhand der Vektorlaenge -- ueber
+    alle registrierten Wahrnehmungen (auch die Nahbereichs-Varianten), statt
+    nur "einfach" und "reich" fest zu unterscheiden.
     """
-    labels = RICH_FEATURE_LABELS if len(vector) == RICH_INPUT_SIZE else FEATURE_LABELS
-    lines = [
-        f"  {label:<22}: {value: .3f}"
-        for label, value in zip(labels, vector)
-    ]
-    return "\n".join(lines)
+    for _fn, size, labels in PERCEPTIONS.values():
+        if size == len(vector):
+            return "\n".join(
+                f"  {label:<22}: {value: .3f}" for label, value in zip(labels, vector)
+            )
+    return "\n".join(f"  [{i}]: {v: .3f}" for i, v in enumerate(vector))

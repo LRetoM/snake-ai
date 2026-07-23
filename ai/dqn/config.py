@@ -34,7 +34,10 @@ class DQNConfig:
     # ------------------------------------------------------------------ #
     grid_cols: int = 20
     grid_rows: int = 20
-    fruit_count: int = 1
+    # 3 statt 1 Frucht: mehr gleichzeitige Lernanlaesse pro Partie, war Teil
+    # der besten bisher GEMESSENEN Kombination (Pruefung 67, Champion 75.6 --
+    # siehe Kommentare bei hidden/gamma/n_step/eps_decay_steps unten).
+    fruit_count: int = 3
     wrap_walls: bool = False
 
     # ------------------------------------------------------------------ #
@@ -54,7 +57,10 @@ class DQNConfig:
     # ------------------------------------------------------------------ #
     # Eingaenge -> versteckte Schichten -> 3 Ausgaenge (Q-Werte).
     # Groesser = kann Kompliziertes lernen, kostet aber Rechenzeit pro Zug.
-    hidden: tuple[int, ...] = (128, 128)
+    # (256, 128) statt (128, 128): Teil der bisher besten GEMESSENEN Kombi
+    # (Pruefung 67, Champion 75.6 -- deutlich vor den reinen Code-Defaults,
+    # die nur 58 erreichten). Mehr Kapazitaet fuer die reichere Wahrnehmung.
+    hidden: tuple[int, ...] = (256, 128)
 
     # ------------------------------------------------------------------ #
     # Die parallel laufenden Spiele
@@ -63,20 +69,24 @@ class DQNConfig:
     # Tagebuch, gesteuert von EINEM gemeinsamen Gehirn. Ein Fehler von Schlange 3
     # lehrt alle. Mehr Spiele = mehr frische, unterschiedliche Erfahrung pro
     # Lernschritt (und kaum Mehrkosten, weil alle in EINEM Netz-Durchlauf
-    # entscheiden).
-    num_games: int = 8
+    # entscheiden). 16 statt 8: Teil derselben gemessenen Bestkombi.
+    num_games: int = 16
 
     # ------------------------------------------------------------------ #
     # Lernen (Gradientenabstieg mit PyTorch)
     # ------------------------------------------------------------------ #
     learning_rate: float = 1e-3     # wie grosse Lernschritte gemacht werden
-    gamma: float = 0.95             # Diskont fuer zukuenftige Belohnung
+    # 0.97 statt 0.95: weitsichtiger, Teil derselben gemessenen Bestkombi --
+    # bei 3 Fruechten und laengeren Partien zahlt sich mehr Weitsicht aus.
+    gamma: float = 0.97
     # Laenge der Erfahrungs-Ketten. 1 = klassisch (jeder Zug lernt von seinem
-    # direkten Nachfolger). Groesser laesst Wissen schneller rueckwaerts wandern
-    # -- gemessen hat es hier aber nichts gebracht (27.4 statt 26.3, das ist
-    # Rauschen), weil die Belohnung ohnehin jeden Zug Rueckmeldung gibt.
-    # Bleibt als Stellschraube fuer spaeter (z.B. mit sparsamerer Belohnung).
-    n_step: int = 1
+    # direkten Nachfolger). In einem ISOLIERTEN A/B-Test (alte Defaults sonst
+    # unveraendert) brachte n_step=3 nichts (27.4 statt 26.3, Rauschen) --
+    # ABER in Kombination mit den anderen Werten hier (mehr Spiele, groesseres
+    # Netz, mehr Fruechte, mehr Weitsicht) war genau diese Gesamt-Kombination
+    # die bisher beste gemessene (Pruefung 67, Champion 75.6). Deshalb hier
+    # uebernommen, obwohl der isolierte Effekt von n_step allein unklar bleibt.
+    n_step: int = 3
     batch_size: int = 256           # so viele Tagebuch-Eintraege pro Lernschritt
     buffer_size: int = 100_000      # Groesse des Tagebuchs (aelteste fallen raus)
     min_buffer: int = 2_000         # erst lernen, wenn so viel Erfahrung da ist
@@ -112,7 +122,10 @@ class DQNConfig:
     # ------------------------------------------------------------------ #
     eps_start: float = 1.0          # Anfang: 100% Zufall (reines Ausprobieren)
     eps_end: float = 0.02           # Ende: fast immer der beste bekannte Zug
-    eps_decay_steps: int = 40_000   # linear von start->end ueber so viele Ticks
+    # 80k statt 40k: Teil derselben gemessenen Bestkombi -- laenger ausprobieren,
+    # bevor die Neugier abgeschaltet wird, zahlt sich mit mehr Spielen/groesserem
+    # Netz aus.
+    eps_decay_steps: int = 80_000   # linear von start->end ueber so viele Ticks
 
     # ------------------------------------------------------------------ #
     # Belohnung = das Lernsignal (LEBT HIER, NICHT IM SPIEL!)

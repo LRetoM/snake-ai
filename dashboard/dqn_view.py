@@ -60,6 +60,10 @@ MAX_DRAWN_BOARDS = 10
 NUM_GAMES_OPTIONS = [1, 2, 4, 5, 6, 8, 12, 16]
 PERCEPTION_PRESETS = [
     ("Reich (39 Werte)", "rich"),
+    ("Reich + Nahbereich 5×5 (64 Werte)", "rich_grid5"),
+    ("Reich + Nahbereich 7×7 (88 Werte)", "rich_grid7"),
+    ("Reich + Nahbereich 9×9 (120 Werte)", "rich_grid9"),
+    ("Volles Feld (411 Werte)", "full_board"),
     ("Einfach (11 Werte)", "simple"),
 ]
 HIDDEN_PRESETS = [
