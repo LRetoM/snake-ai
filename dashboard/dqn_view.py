@@ -87,9 +87,12 @@ GAMMA_PRESETS = [
 NSTEP_PRESETS = [("1 Zug", 1), ("3 Züge", 3), ("5 Züge", 5)]
 FRUIT_OPTIONS = list(range(1, 11))
 
-# Wie viele Trainings-Ticks pro gezeichnetem Bild gerechnet werden.
-SPEED_LEVELS = [1, 2, 4, 8, 16, 32, 64]
-DEFAULT_SPEED = 2
+# Wie viele Trainings-Ticks pro gezeichnetem Bild gerechnet werden. Werte unter
+# 1 heissen "seltener als jedes Bild einen Tick" (siehe _tick_accumulator in
+# _update) -- so lassen sich auch Bruchteile eines Ticks pro Bild sauber
+# abbilden, ohne die Zeichenschleife anzufassen.
+SPEED_LEVELS = [0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128]
+DEFAULT_SPEED = 5   # Index von "4x"
 TURBO_BUDGET = 0.08      # Sekunden Rechenzeit pro Bild im Turbo-Modus
 
 # ----------------------------- Extra-Farben -------------------------------- #
@@ -138,6 +141,7 @@ class DQNDashboard:
         self.paused = False
         self.turbo = False
         self.speed_idx = DEFAULT_SPEED
+        self._tick_accumulator = 0.0
         self._perf: deque = deque(maxlen=40)
 
     # ================================================================== #
@@ -306,6 +310,7 @@ class DQNDashboard:
         self.paused = False
         self.turbo = False
         self.speed_idx = DEFAULT_SPEED
+        self._tick_accumulator = 0.0
         self._perf.clear()
         self.state = DQNDashboard.RUNNING
 
@@ -324,7 +329,13 @@ class DQNDashboard:
                 for _ in range(16):   # in Bloecken, damit die Uhr nicht bremst
                     self.trainer.step()
         else:
-            for _ in range(SPEED_LEVELS[self.speed_idx]):
+            # Bruchteile eines Ticks pro Bild (z.B. 0.1x) sammeln sich hier an,
+            # bis ein ganzer Tick zusammenkommt -- so funktioniert dieselbe
+            # Schleife nahtlos fuer 0.1x genauso wie fuer 128x.
+            self._tick_accumulator += SPEED_LEVELS[self.speed_idx]
+            n_ticks = int(self._tick_accumulator)
+            self._tick_accumulator -= n_ticks
+            for _ in range(n_ticks):
                 self.trainer.step()
 
         self._perf.append((time.perf_counter(), self.trainer.total_moves))
