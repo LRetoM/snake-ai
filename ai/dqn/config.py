@@ -32,8 +32,17 @@ class DQNConfig:
     # ------------------------------------------------------------------ #
     # Umgebung (identisch zum Menschen-Standard, damit der Vergleich fair ist)
     # ------------------------------------------------------------------ #
-    grid_cols: int = 20
-    grid_rows: int = 20
+    # 17x15 = 255 Zellen (offizielle Google-Snake-Masse) statt 20x20 (=400).
+    # Bewusst gewaehlt, nicht nur "wie das Original": 255 ist UNGERADE. Auf
+    # einem Brett mit ungerader Zellenzahl gibt es beweisbar KEINEN
+    # geschlossenen Rundkurs durch alle Felder (Schachbrett-Argument: ein
+    # Rundkurs wechselt mit jedem Schritt die Farbe, braucht also gleich
+    # viele schwarze wie weisse Felder -- bei 255 unmoeglich). Die KI kann
+    # sich also nie eine "sichere Endlosrunde" antrainieren; 100% Feld
+    # erfordert echte, flexible Raumplanung statt eines auswendig gelernten
+    # Musters. Siehe TRAININGSPLAN.md Abschnitt A1.
+    grid_cols: int = 17
+    grid_rows: int = 15
     # 3 statt 1 Frucht: mehr gleichzeitige Lernanlaesse pro Partie, war Teil
     # der besten bisher GEMESSENEN Kombination (Pruefung 67, Champion 75.6 --
     # siehe Kommentare bei hidden/gamma/n_step/eps_decay_steps unten).
@@ -61,6 +70,14 @@ class DQNConfig:
     # (Pruefung 67, Champion 75.6 -- deutlich vor den reinen Code-Defaults,
     # die nur 58 erreichten). Mehr Kapazitaet fuer die reichere Wahrnehmung.
     hidden: tuple[int, ...] = (256, 128)
+    # Aktivierungsfunktion in den versteckten Schichten. Die Neuroevolution
+    # nutzt zwingend "tanh" (ihre Mutation/Crossover rechnet auf begrenzten
+    # Gewichten). Fuers DQN ist "relu" die uebliche, bessere Wahl: tanh
+    # "saettigt" bei grossen Werten (Steigung geht gegen 0, Lernsignal
+    # versickert) -- und unsere Q-Werte liegen bereits im Bereich von ~30-40.
+    # relu hat dieses Problem nicht. Aeltere Checkpoints ohne dieses Feld
+    # werden weiterhin als "tanh" geladen (siehe agent.py/torch_bridge.py).
+    activation: str = "relu"
 
     # ------------------------------------------------------------------ #
     # Die parallel laufenden Spiele
@@ -157,7 +174,10 @@ class DQNConfig:
     # Zufall (epsilon = 0). Dieser Pruefungs-Score ist der ehrliche Wert -- und
     # genau der, den du auch beim Zuschauen (watch_ai.py) siehst.
     eval_every_episodes: int = 200  # alle N Episoden eine Pruefung
-    eval_episodes: int = 10         # so viele Partien pro Pruefung
+    # 20 statt 10: bei 10 Partien entscheidet zu viel Gluck ueber den
+    # Champion (beobachtete Streuung: 40 vs. 78 mit DEMSELBEN Netz). Mehr
+    # Partien = ehrlicherer Durchschnitt, besonders auf hohem Niveau.
+    eval_episodes: int = 20         # so viele Partien pro Pruefung
     eval_max_steps: int = 4_000     # Notbremse, falls eine Pruefpartie ewig laeuft
 
     # ------------------------------------------------------------------ #

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from game.config import GRID_COLS, GRID_ROWS
 from game.snake_game import Action, Direction, SnakeGame, relative_turn
 
 # Anzahl der Eingangswerte -- das neuronale Netz wird genau so viele Eingaenge haben.
@@ -373,18 +372,24 @@ def make_rich_grid_perception(window: int):
 # Fruchtrichtung/Schwanzrichtung (wie bei "rich") sind hier ueberfluessig --
 # beides liegt ja bereits sichtbar im Feld selbst.
 #
-# Nimmt an, dass grid_cols/grid_rows den Standardwerten aus game/config.py
-# entsprechen (20x20) -- so gross ist das Netz bereits beim Start festgelegt.
-# Wer die Feldgroesse per Hand in DQNConfig aendert, muss diese Konstanten
-# hier mitziehen (kein Menue-Regler dafuer, siehe game_cfg in trainer.py).
-FULL_BOARD_INPUT_SIZE = 11 + GRID_COLS * GRID_ROWS
-
-FULL_BOARD_LABELS = (
-    ["Gefahr geradeaus", "Gefahr rechts", "Gefahr links",
-     "Richtung: oben", "Richtung: rechts", "Richtung: unten", "Richtung: links",
-     "Kopf x (normiert)", "Kopf y (normiert)", "Laenge", "Hunger"]
-    + [f"Feld ({x},{y})" for y in range(GRID_ROWS) for x in range(GRID_COLS)]
-)
+# Die Eingangsgroesse haengt hier von der BRETTGROESSE ab (11 + cols*rows) --
+# anders als bei den anderen Wahrnehmungen laesst sie sich also nicht einmalig
+# beim Modul-Import festlegen (das Brett ist waehlbar, siehe Menue
+# "Brettgroesse" / DQNConfig.grid_cols/grid_rows). Groesse+Labels kommen
+# deshalb erst zur Laufzeit aus `make_full_board_perception(cols, rows)` --
+# die Wahrnehmungsfunktion selbst braucht dafuer KEINE Anpassung, sie liest
+# Breite/Hoehe ohnehin live aus `game.cols`/`game.rows`.
+def make_full_board_perception(cols: int, rows: int):
+    """(Funktion, Eingangsgroesse, Labels) fuer die volle Feld-Sicht auf
+    einem cols x rows Brett -- passend zum PERCEPTIONS-Format."""
+    size = 11 + cols * rows
+    labels = (
+        ["Gefahr geradeaus", "Gefahr rechts", "Gefahr links",
+         "Richtung: oben", "Richtung: rechts", "Richtung: unten", "Richtung: links",
+         "Kopf x (normiert)", "Kopf y (normiert)", "Laenge", "Hunger"]
+        + [f"Feld ({x},{y})" for y in range(rows) for x in range(cols)]
+    )
+    return perceive_full_board, size, labels
 
 
 def perceive_full_board(game: SnakeGame) -> np.ndarray:
@@ -441,19 +446,40 @@ def perceive_full_board(game: SnakeGame) -> np.ndarray:
 PERCEPTIONS = {
     "simple": (perceive, INPUT_SIZE, FEATURE_LABELS),
     "rich": (perceive_rich, RICH_INPUT_SIZE, RICH_FEATURE_LABELS),
-    "full_board": (perceive_full_board, FULL_BOARD_INPUT_SIZE, FULL_BOARD_LABELS),
 }
 for _window in (5, 7, 9):
     PERCEPTIONS[f"rich_grid{_window}"] = make_rich_grid_perception(_window)
 del _window
 
+# Wahrnehmungen, deren Eingangsgroesse von der Brettgroesse abhaengt (aktuell
+# nur "full_board") -- lassen sich nicht wie oben einmalig beim Modul-Import
+# vorberechnen. get_perception() braucht fuer sie zusaetzlich cols/rows.
+BOARD_DEPENDENT_PERCEPTIONS = {
+    "full_board": make_full_board_perception,
+}
 
-def get_perception(name: str):
-    """(Funktion, Groesse, Bezeichnungen) fuer einen Wahrnehmungs-Namen."""
-    if name not in PERCEPTIONS:
-        raise ValueError(f"Unbekannte Wahrnehmung '{name}'. "
-                         f"Moeglich: {', '.join(PERCEPTIONS)}")
-    return PERCEPTIONS[name]
+
+def get_perception(name: str, cols: int | None = None, rows: int | None = None):
+    """(Funktion, Groesse, Bezeichnungen) fuer einen Wahrnehmungs-Namen.
+
+    Brettgroessen-abhaengige Wahrnehmungen (aktuell "full_board") brauchen
+    zusaetzlich `cols`/`rows` -- ohne die laesst sich ihre Eingangsgroesse
+    nicht bestimmen (das Netz muesste sonst raten, wie viele Feldzellen
+    ueberhaupt kommen). Aufrufer: `ai/dqn/trainer.py` uebergibt dafuer
+    `cfg.grid_cols`/`cfg.grid_rows`; `watch_ai.py` die Brettgroesse aus dem
+    geladenen Champion-Checkpoint.
+    """
+    if name in PERCEPTIONS:
+        return PERCEPTIONS[name]
+    if name in BOARD_DEPENDENT_PERCEPTIONS:
+        if cols is None or rows is None:
+            raise ValueError(
+                f"Wahrnehmung '{name}' haengt von der Brettgroesse ab -- "
+                "get_perception() braucht dafuer cols und rows."
+            )
+        return BOARD_DEPENDENT_PERCEPTIONS[name](cols, rows)
+    bekannt = list(PERCEPTIONS) + list(BOARD_DEPENDENT_PERCEPTIONS)
+    raise ValueError(f"Unbekannte Wahrnehmung '{name}'. Moeglich: {', '.join(bekannt)}")
 
 
 def describe(vector: np.ndarray) -> str:

@@ -38,16 +38,46 @@ from ai.perception import get_perception
 
 FPS = 60
 _MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+
+
+def _find_dqn_champion() -> str | None:
+    """Welcher DQN-Champion wird gezeigt?
+
+    Seit der Brett-Umstellung (siehe TRAININGSPLAN.md S0.3) hat jede
+    Brettgroesse ihre EIGENE Champion-Datei. Bevorzugt wird der Champion des
+    Standard-Bretts (17x15, DQNConfig()) -- existiert der (noch) nicht, der
+    zuletzt gespeicherte Champion IRGENDEINES Bretts (per Datei-Datum).
+    Lieber ehrlich den neuesten vorhandenen Fortschritt zeigen, als mit einer
+    harten Fehlermeldung abzubrechen, nur weil noch kein 17x15-Champion
+    existiert (z.B. mitten im Klein-Feld-Curriculum).
+    """
+    import glob
+
+    from ai.dqn.config import DQNConfig
+    from ai.dqn.trainer import resolve_champion_path
+
+    default_cfg = DQNConfig()
+    path = resolve_champion_path(default_cfg.grid_cols, default_cfg.grid_rows)
+    if path:
+        return path
+    candidates = glob.glob(os.path.join(_MODEL_DIR, "dqn_champion_*.pt"))
+    legacy = os.path.join(_MODEL_DIR, "dqn_champion.pt")
+    if os.path.exists(legacy):
+        candidates.append(legacy)
+    return max(candidates, key=os.path.getmtime) if candidates else None
+
+
 # Beide KIs koennen hier zuschauen -- sie teilen sich das Speicherformat, aber
 # nicht ihr Wissen. Aufruf: "python watch_ai.py" (Neuroevolution, Standard)
-# oder "python watch_ai.py dqn" (Deep Q-Learning).
+# oder "python watch_ai.py dqn" (Deep Q-Learning). "dqn" hat einen Resolver
+# statt eines festen Pfads, weil die passende Datei von der Brettgroesse
+# abhaengt (siehe _find_dqn_champion).
 _MODELS = {
-    "evo": (os.path.join(_MODEL_DIR, "evo_champion.pt"),
+    "evo": (lambda: os.path.join(_MODEL_DIR, "evo_champion.pt"),
             "Neuroevolution-Champion spielt selbst", "train_evolution.py"),
-    "dqn": (os.path.join(_MODEL_DIR, "dqn_champion.pt"),
+    "dqn": (_find_dqn_champion,
             "Deep-Q-Learning-Champion spielt selbst", "train_dqn.py"),
 }
-_MODEL_PATH = _MODELS["evo"][0]
 
 # Wichtig: Das SPIEL selbst kennt KEINE "Verhungern"-Regel -- das ist bewusst so
 # (Leitplanke: die KI-Trainingsregeln duerfen keine Spielregeln sein). Beim
@@ -60,15 +90,13 @@ _MODEL_PATH = _MODELS["evo"][0]
 STUCK_LIMIT = 400
 
 
-def load_champion(path: str = _MODEL_PATH) -> tuple[SnakeNet, dict]:
+def load_champion(path: str, train_cmd: str = "train_evolution.py") -> tuple[SnakeNet, dict]:
     """Laedt den gespeicherten Champion-Checkpoint (Netz + Trainings-Metadaten).
 
     Bricht mit einer klaren, verstaendlichen Meldung ab, falls noch nie
     trainiert wurde -- statt mit einem kryptischen Absturz.
     """
     if not os.path.exists(path):
-        train_cmd = next((cmd for p, _t, cmd in _MODELS.values() if p == path),
-                         "train_evolution.py")
         print(
             "Kein trainierter Champion gefunden.\n"
             f"  Erwartet unter: {path}\n\n"
@@ -83,7 +111,10 @@ def load_champion(path: str = _MODEL_PATH) -> tuple[SnakeNet, dict]:
     # Aeltere Checkpoints (Neuroevolution) haben diese Angaben nicht -- dann
     # gilt die einfache 11er-Wahrnehmung, mit der sie trainiert wurden.
     input_size = int(checkpoint.get("input_size", 11))
-    net = SnakeNet(hidden=checkpoint["hidden"], input_size=input_size)
+    # Aeltere DQN-Checkpoints (von vor der ReLU-Option) und Neuroevolution
+    # kennen "activation" nicht -- fuer beide war es immer "tanh".
+    activation = checkpoint.get("activation", "tanh")
+    net = SnakeNet(hidden=checkpoint["hidden"], input_size=input_size, activation=activation)
     net.load_state_dict(checkpoint["state_dict"])
     net.eval()  # nur Inferenz -- kein Training, keine Gradienten noetig
     return net, checkpoint
@@ -105,12 +136,26 @@ class WatchApp:
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
 
-        path, self.headline, self.train_cmd = _MODELS[which]
-        self.net, self.checkpoint = load_champion(path)
+        resolver, self.headline, self.train_cmd = _MODELS[which]
+        path = resolver()
+        if path is None:
+            print(
+                "Kein trainierter Champion gefunden.\n\n"
+                "Starte zuerst ein Training:\n"
+                f"  python {self.train_cmd}\n"
+                "(im Dashboard eine Weile laufen lassen -- der beste Bot wird\n"
+                "automatisch gespeichert)."
+            )
+            sys.exit(1)
+        self.net, self.checkpoint = load_champion(path, self.train_cmd)
         # Welche Wahrnehmung will dieses Netz gefuettert bekommen? Steht im
-        # Checkpoint (aeltere kennen nur die einfache).
+        # Checkpoint (aeltere kennen nur die einfache). cols/rows werden
+        # mitgegeben, weil "full_board" seine Eingangsgroesse erst aus der
+        # Brettgroesse des Checkpoints ableiten kann.
         self.perceive, _size, _labels = get_perception(
-            self.checkpoint.get("perception", "simple"))
+            self.checkpoint.get("perception", "simple"),
+            self.checkpoint.get("grid_cols", 20),
+            self.checkpoint.get("grid_rows", 20))
 
         # Einzige Einstellung im Menue: Anzeige-Geschwindigkeit. Fruchtanzahl/
         # Wandmodus kommen bewusst FEST aus dem Checkpoint -- so wird die KI

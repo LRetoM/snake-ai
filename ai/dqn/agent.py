@@ -136,10 +136,15 @@ class DQNAgent:
             self.threads = tune_threads(input_size, cfg.hidden, cfg.batch_size)
         self.threads = torch.get_num_threads()
 
+        # relu statt tanh: tanh "saettigt" bei den fuer DQN typischen groesseren
+        # Q-Werten (Steigung geht gegen 0, Lernsignal versickert) -- relu hat
+        # dieses Problem nicht. Ueber cfg.activation einstellbar/messbar.
+        activation = getattr(cfg, "activation", "tanh")
+
         # policy_net = das Netz, das entscheidet UND trainiert wird.
-        self.policy_net = SnakeNet(cfg.hidden, input_size).to(self.device)
+        self.policy_net = SnakeNet(cfg.hidden, input_size, activation).to(self.device)
         # target_net = die eingefrorene Kopie, die nur das Lernziel liefert.
-        self.target_net = SnakeNet(cfg.hidden, input_size).to(self.device)
+        self.target_net = SnakeNet(cfg.hidden, input_size, activation).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()  # wird nie direkt trainiert
 
@@ -282,10 +287,12 @@ class DQNAgent:
         payload = {
             "state_dict": self.policy_net.state_dict(),
             "hidden": tuple(self.cfg.hidden),
-            # Ohne diese beiden Angaben wuesste ein Zuschau-Programm spaeter
-            # nicht, mit welcher Wahrnehmung das Netz gefuettert werden will.
+            # Ohne diese Angaben wuesste ein Zuschau-Programm spaeter nicht,
+            # mit welcher Wahrnehmung/Aktivierung das Netz gefuettert werden
+            # will bzw. gebaut werden muss.
             "input_size": self.input_size,
             "perception": self.cfg.perception,
+            "activation": self.policy_net.activation,
         }
         payload.update(meta)
         torch.save(payload, path)

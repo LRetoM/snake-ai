@@ -23,20 +23,34 @@ from ai.perception import INPUT_SIZE
 
 
 class SnakeNet(nn.Module):
-    """Dasselbe Netz als PyTorch-Modul: N -> hidden... -> 3, tanh in den Hidden.
+    """Dasselbe Netz als PyTorch-Modul: N -> hidden... -> 3 Q-Werte.
 
     `input_size` ist normalerweise 11 (die Standard-Wahrnehmung, die auch die
     Neuroevolution benutzt). Das DQN kann optional mit einer REICHEREN
     Wahrnehmung laufen (ai/perception.py, `perceive_rich`) -- dafuer muss die
     Eingangsschicht groesser sein. Deshalb ist die Groesse hier einstellbar,
     mit dem alten Wert als Standard: bestehende Checkpoints laden unveraendert.
+
+    `activation` (neu): "tanh" oder "relu" in den versteckten Schichten.
+    Default bleibt "tanh" -- WICHTIG fuer die Neuroevolution, deren Mutation/
+    Crossover auf begrenzten Gewichten rechnet und die deshalb IMMER tanh
+    benutzt (ruft `SnakeNet` ohne dieses Argument auf, siehe genome_to_net
+    unten). Das DQN uebergibt explizit "relu" (siehe ai/dqn/config.py):
+    tanh "saettigt" bei grossen Werten (die Steigung geht gegen 0, das
+    Lernsignal versickert) -- ein Problem, das bei DQN-Q-Werten im Bereich
+    von 30-40 tatsaechlich auftritt, bei den kleinen Neuroevolution-Gewichten
+    aber nicht relevant ist.
     """
 
     def __init__(self, hidden: tuple[int, ...] = DEFAULT_HIDDEN,
-                 input_size: int = INPUT_SIZE) -> None:
+                 input_size: int = INPUT_SIZE, activation: str = "tanh") -> None:
         super().__init__()
         self.hidden = tuple(hidden)
         self.input_size = int(input_size)
+        if activation not in ("tanh", "relu"):
+            raise ValueError(f"Unbekannte Aktivierung '{activation}'. Moeglich: tanh, relu")
+        self.activation = activation
+        self._act_fn = torch.tanh if activation == "tanh" else torch.relu
         layers = []
         prev = self.input_size
         for h in hidden:
@@ -47,7 +61,7 @@ class SnakeNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.hidden_layers:
-            x = torch.tanh(layer(x))
+            x = self._act_fn(layer(x))
         return self.out(x)
 
     # -- Genom <-> Netzgewichte (gleiche Reihenfolge wie NumpyPolicy) --------- #

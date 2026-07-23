@@ -7,11 +7,16 @@ Start (mit Fenster, zum Zusehen):
 Start OHNE Fenster (maximaler Lern-Durchsatz, z.B. ueber Nacht):
     python train_dqn.py --headless 30      (30 Minuten rechnen)
     python train_dqn.py --headless 30 --weiter   (auf dem Champion aufbauen)
+    python train_dqn.py --headless 480 --weiter --brett 17x15
+        (Brett-Transfer: baut auf dem Champion des Standard-Bretts auf,
+         trainiert aber auf dem angegebenen Brett weiter -- siehe
+         TRAININGSPLAN.md Abschnitt B3/S0.4 fuers Klein->Gross-Curriculum)
 
 Der Unterschied: ohne Fenster faellt das Zeichnen komplett weg -- je nach
 Rechner sind das nochmal 10-30% mehr Zuege pro Sekunde als der Turbo-Modus im
 Fenster. Der Fortschritt wird stattdessen alle 30 Sekunden in die Konsole
-geschrieben, und der beste Bot landet wie immer in models/dqn_champion.pt.
+geschrieben, und der beste Bot landet in models/dqn_champion_<cols>x<rows>.pt
+(jede Brettgroesse hat ihre eigene Champion-Datei).
 
 Wichtig: Das MUSS unter dem normalen CPython-venv laufen, nicht unter PyPy --
 DQN rechnet mit PyTorch, und fuer PyPy gibt es kein torch. (Der PyPy-Umweg gilt
@@ -38,25 +43,72 @@ import time
 from ai.dqn.config import DQNConfig
 
 
-def run_headless(minutes: float, resume: bool) -> None:
-    """Trainiert ohne jede Grafik und meldet den Fortschritt in der Konsole."""
-    from ai.dqn.trainer import CHAMPION_PATH, MultiGameTrainer, load_champion_config
-    import os
+def _parse_board(text: str) -> tuple[int, int]:
+    """Wandelt "17x15" (oder "17X15") in (17, 15) um."""
+    try:
+        cols_s, rows_s = text.lower().split("x")
+        return int(cols_s), int(rows_s)
+    except ValueError as exc:
+        raise SystemExit(
+            f"--brett erwartet das Format SPALTENxZEILEN, z.B. 17x15 (bekommen: '{text}')"
+        ) from exc
 
-    resume_path = CHAMPION_PATH if (resume and os.path.exists(CHAMPION_PATH)) else None
+
+def _resolve_resume_path(target_cols: int, target_rows: int):
+    """Welche Champion-Datei fuer --weiter (+optional --brett) geladen wird.
+
+    1) Gibt es fuer das ZIEL-Brett schon einen Champion -> ganz normales
+       Weitertrainieren auf demselben Brett.
+    2) Sonst (Brett-Transfer, z.B. Klein-Feld-Curriculum): der Champion des
+       Standard-Bretts (DQNConfig()-Default) dient als Ausgangspunkt --
+       seine Gewichte werden geladen, das Brett aber auf das Ziel gesetzt.
+       Fuer mehrstufige Curricula (9x9 -> 13x11 -> 17x15) empfiehlt sich
+       stattdessen das Fenster-Menue (siehe TRAININGSPLAN.md Abschnitt B3),
+       das gezielt den Champion EINES bestimmten Zwischenbretts laedt.
+    """
+    from ai.dqn.trainer import resolve_champion_path
+
+    path = resolve_champion_path(target_cols, target_rows)
+    if path:
+        return path
+    default_cfg = DQNConfig()
+    if (default_cfg.grid_cols, default_cfg.grid_rows) != (target_cols, target_rows):
+        return resolve_champion_path(default_cfg.grid_cols, default_cfg.grid_rows)
+    return None
+
+
+def run_headless(minutes: float, resume: bool, brett: str | None = None) -> None:
+    """Trainiert ohne jede Grafik und meldet den Fortschritt in der Konsole."""
+    from ai.dqn.trainer import MultiGameTrainer, load_champion_config
+
+    base_cfg = DQNConfig()
+    target_cols, target_rows = (
+        _parse_board(brett) if brett else (base_cfg.grid_cols, base_cfg.grid_rows)
+    )
+
+    resume_path = _resolve_resume_path(target_cols, target_rows) if resume else None
     # Weitertrainieren heisst: auch die Einstellungen exakt so uebernehmen, mit
     # denen dieser Champion gezuechtet wurde -- sonst wuerden Netzgroesse,
     # Lernrate, Fruechte etc. wieder auf die Code-Standardwerte zurueckfallen,
     # obwohl der Champion vielleicht ganz anders (und besser) eingestellt war.
-    cfg = load_champion_config() if resume_path else None
+    cfg = load_champion_config(resume_path) if resume_path else None
     if cfg is None:
         cfg = DQNConfig()
+    board_transfer = (cfg.grid_cols, cfg.grid_rows) != (target_cols, target_rows)
+    cfg.grid_cols, cfg.grid_rows = target_cols, target_rows
+
     trainer = MultiGameTrainer(cfg, log_to_csv=True, resume_from=resume_path)
 
-    print(f"Wahrnehmung: {cfg.perception} ({trainer.input_size} Werte)   "
+    print(f"Brett: {cfg.grid_cols}x{cfg.grid_rows}   "
+          f"Wahrnehmung: {cfg.perception} ({trainer.input_size} Werte)   "
           f"Netz: {cfg.hidden}   Spiele: {cfg.num_games}   "
           f"Threads: {trainer.agent.threads}")
-    if resume_path:
+    if resume_path and board_transfer:
+        print(f"Brett-Transfer: Gewichte von {resume_path} uebernommen, "
+              f"trainiert jetzt auf {cfg.grid_cols}x{cfg.grid_rows} weiter "
+              "(Rekorde starten neu -- Scores sind zwischen Brettgroessen "
+              "nicht vergleichbar).")
+    elif resume_path:
         print(f"Weitertrainiert auf: {resume_path}  (Einstellungen vom Champion uebernommen)")
     print(f"Laeuft {minutes:g} Minuten. Abbrechen mit Strg+C.\n")
 
@@ -99,10 +151,19 @@ def main() -> None:
                         help="ohne Fenster trainieren, so viele Minuten lang")
     parser.add_argument("--weiter", action="store_true",
                         help="auf dem gespeicherten Champion aufbauen")
+    parser.add_argument("--brett", metavar="SPALTENxZEILEN",
+                        help="Brettgroesse fuer diesen Lauf, z.B. 17x15 -- "
+                             "nur zusammen mit --weiter sinnvoll (Brett-"
+                             "Transfer, siehe TRAININGSPLAN.md). Nur im "
+                             "--headless-Modus; im Fenster gibt es dafuer "
+                             "die Menue-Zeile 'Brettgroesse'.")
     args = parser.parse_args()
 
     if args.headless:
-        run_headless(args.headless, args.weiter)
+        run_headless(args.headless, args.weiter, args.brett)
+    elif args.brett:
+        raise SystemExit("--brett wird nur mit --headless unterstuetzt -- "
+                          "im Fenster die Menue-Zeile 'Brettgroesse' benutzen.")
     else:
         from dashboard.dqn_view import main as run_dashboard
         run_dashboard(resume=args.weiter)

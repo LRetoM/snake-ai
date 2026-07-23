@@ -61,12 +61,45 @@ from ai.dqn.reward import compute_reward, fruit_distance
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODEL_DIR = os.path.join(_ROOT, "models")
 LOG_DIR = os.path.join(_ROOT, "logs")
-CHAMPION_PATH = os.path.join(MODEL_DIR, "dqn_champion.pt")
+# Legacy: Champion-Pfad von VOR der Brett-Umstellung (als es nur 20x20 gab).
+# Nur noch als Lese-Fallback in resolve_champion_path() gebraucht -- neu
+# gespeichert wird immer im brettspezifischen Schema unten.
+_LEGACY_CHAMPION_PATH = os.path.join(MODEL_DIR, "dqn_champion.pt")
 
 
-def load_champion_config(path: str = CHAMPION_PATH) -> DQNConfig | None:
-    """Laedt die EXAKTEN Einstellungen, mit denen der gespeicherte Champion
-    trainiert wurde (siehe "full_config" in `_save_champion`).
+def champion_path(cols: int, rows: int) -> str:
+    """Datei-Pfad fuer den Champion EINES bestimmten Bretts.
+
+    Jede Brettgroesse bekommt ihre EIGENE Champion-Datei: ein Score 80 auf
+    einem 9x9-Feld ist etwas ganz anderes als ein Score 80 auf 17x15 --
+    beide in dieselbe Datei zu speichern wuerde sowohl einen ehrlichen
+    Vergleich als auch den Ueberschreib-Schutz weiter unten unmoeglich
+    machen (ein schwacher 17x15-Champion wuerde sonst nie einen starken
+    9x9-Champion "schlagen" muessen, weil beide Zahlen nicht vergleichbar
+    sind -- die Datei-Trennung macht dieses Problem von vornherein unmoeglich).
+    """
+    return os.path.join(MODEL_DIR, f"dqn_champion_{cols}x{rows}.pt")
+
+
+def resolve_champion_path(cols: int, rows: int) -> str | None:
+    """Pfad zu einer TATSAECHLICH VORHANDENEN Champion-Datei fuer dieses
+    Brett -- oder None, wenn es (auf diesem Brett) noch keine gibt.
+
+    Uebergangsregel: gibt es noch keine neue `dqn_champion_20x20.pt`, aber
+    die alte `dqn_champion.pt` von vor der Brett-Umstellung, zaehlt die als
+    20x20-Champion (Legacy-Lesepfad; geschrieben wird nur noch neu).
+    """
+    new_path = champion_path(cols, rows)
+    if os.path.exists(new_path):
+        return new_path
+    if (cols, rows) == (20, 20) and os.path.exists(_LEGACY_CHAMPION_PATH):
+        return _LEGACY_CHAMPION_PATH
+    return None
+
+
+def load_champion_config(path: str) -> DQNConfig | None:
+    """Laedt die EXAKTEN Einstellungen, mit denen der unter `path` gespeicherte
+    Champion trainiert wurde (siehe "full_config" in `_save_champion`).
 
     Ohne das wuerde jedes Weitertrainieren (CLI --weiter wie das Menue-Haekchen
     "Champion weitertrainieren") wieder mit den Code-Standardwerten aus
@@ -74,6 +107,7 @@ def load_champion_config(path: str = CHAMPION_PATH) -> DQNConfig | None:
     (Netzgroesse, Lernrate, Fruechte, ...) gezuechtet wurde -- das Weiter-
     trainieren waere dann inkonsistent zu dem, was ihn tatsaechlich stark
     gemacht hat. Gibt None zurueck, wenn (noch) kein Champion existiert.
+    `path` kommt typischerweise aus `resolve_champion_path(cols, rows)`.
     """
     if not os.path.exists(path):
         return None
@@ -136,7 +170,14 @@ class MultiGameTrainer:
         cfg = self.cfg
 
         # Welche Wahrnehmung? Daraus folgt auch die Eingangsgroesse des Netzes.
-        self.perceive, self.input_size, _labels = get_perception(cfg.perception)
+        # cols/rows werden mitgegeben, weil "full_board" seine Eingangsgroesse
+        # erst aus der Brettgroesse ableiten kann (siehe ai/perception.py).
+        self.perceive, self.input_size, _labels = get_perception(
+            cfg.perception, cfg.grid_cols, cfg.grid_rows)
+
+        # Champion-Datei DIESES Bretts -- jede Brettgroesse hat ihre eigene
+        # (siehe champion_path() oben im Modul).
+        self.champion_file = champion_path(cfg.grid_cols, cfg.grid_rows)
 
         # Ein Basis-Seed sorgt dafuer, dass jedes Spiel seinen EIGENEN Zufall
         # bekommt (sonst spawnen alle Fruechte identisch -> die Spiele waeren
@@ -198,6 +239,10 @@ class MultiGameTrainer:
         self.eval_points: list[int] = []
         self._next_eval_at = cfg.eval_every_episodes
         self.champion_path: str | None = None
+        # Bei einem Brett-Wechsel waehrend "--weiter" (siehe TRAININGSPLAN.md
+        # S0.4): (altes_cols, altes_rows) wenn dieser Lauf ein Brett-Transfer
+        # ist, sonst None. Nur fuers Dashboard/Log -- aendert kein Verhalten.
+        self.board_transfer_from: tuple[int, int] | None = None
 
         # ---- Weitertrainieren: Zaehler + Neugier aus dem Checkpoint holen -- #
         # OHNE das hier wuerde jeder --weiter-Lauf so tun, als waere der Bot
@@ -213,25 +258,46 @@ class MultiGameTrainer:
             meta = self._resume_meta
             self.total_steps = int(meta.get("total_steps", 0))
             self.total_episodes = int(meta.get("total_episodes", 0))
-            self.best_score = int(meta.get("best_train_score", meta.get("score", 0)))
-            self.eval_best = float(meta.get("eval_mean", meta.get("score", 0.0)))
-            self.eval_max = int(meta.get("score", 0))
+
+            # Brett-Transfer? (Champion kam von einem ANDEREN Brett, siehe
+            # Klein-Feld-Curriculum in TRAININGSPLAN.md 2.3/S0.4). Erkennung:
+            # die Brettmasse im Checkpoint weichen von der aktuellen Config ab.
+            old_cols = int(meta.get("grid_cols", cfg.grid_cols))
+            old_rows = int(meta.get("grid_rows", cfg.grid_rows))
+            same_board = (old_cols == cfg.grid_cols and old_rows == cfg.grid_rows)
+
+            if same_board:
+                self.best_score = int(meta.get("best_train_score", meta.get("score", 0)))
+                self.eval_best = float(meta.get("eval_mean", meta.get("score", 0.0)))
+                self.eval_max = int(meta.get("score", 0))
+            else:
+                # Gewichte + gesammelte Erfahrung (s.u.) kommen mit, Rekorde
+                # NICHT -- ein Score auf dem alten Brett ist mit dem neuen
+                # nicht vergleichbar (anderes Feld, andere Schwierigkeit).
+                self.best_score = 0
+                self.eval_best = 0.0
+                self.eval_max = 0
+                self.board_transfer_from = (old_cols, old_rows)
+
             progress = min(1.0, self.total_steps / max(1, cfg.eps_decay_steps))
             self.epsilon = cfg.eps_start + (cfg.eps_end - cfg.eps_start) * progress
 
         # ---- Bestehenden Champion NIE mit einem schlechteren ueberschreiben - #
-        # Das gilt auch bei einem FRISCHEN Lauf (kein --weiter): ohne diese
-        # Pruefung startet eval_best dort bei 0, und die allererste Pruefung
-        # mit eval_mean > 0 wuerde models/dqn_champion.pt sofort mit einem kaum
-        # trainierten Netz ueberschreiben -- ein bereits starker Champion (z.B.
-        # Pruefung 75) waere dann unwiderruflich weg. Der Datei-Wert ist deshalb
-        # IMMER die Untergrenze, egal ob dieser Lauf neu startet oder weiter-
-        # trainiert (bei --weiter ist es ohnehin derselbe Wert wie oben, also
-        # ein No-Op).
-        if os.path.exists(CHAMPION_PATH):
+        # Das gilt auch bei einem FRISCHEN Lauf (kein --weiter) UND bei einem
+        # Brett-Transfer: ohne diese Pruefung startet eval_best dort bei 0, und
+        # die allererste Pruefung mit eval_mean > 0 wuerde die Champion-Datei
+        # DIESES Bretts sofort mit einem kaum trainierten Netz ueberschreiben --
+        # ein bereits starker Champion (z.B. Pruefung 75) waere dann
+        # unwiderruflich weg. Bewusst nur die Datei DIESES Bretts (siehe
+        # resolve_champion_path) -- Scores anderer Brettgroessen sind nicht
+        # vergleichbar. Der Datei-Wert ist die Untergrenze, egal ob dieser Lauf
+        # neu startet oder weitertrainiert (bei --weiter auf DEMSELBEN Brett
+        # ist es ohnehin derselbe Wert wie oben, also ein No-Op).
+        _existing_path = resolve_champion_path(cfg.grid_cols, cfg.grid_rows)
+        if _existing_path:
             try:
                 import torch
-                existing = torch.load(CHAMPION_PATH, map_location="cpu", weights_only=False)
+                existing = torch.load(_existing_path, map_location="cpu", weights_only=False)
                 existing_best = float(existing.get("eval_mean", existing.get("score", 0.0)))
                 self.eval_best = max(self.eval_best, existing_best)
             except Exception:
@@ -239,9 +305,13 @@ class MultiGameTrainer:
 
         # Eigene Spiele fuer die Pruefung, damit das laufende Training nicht
         # gestoert wird (die Trainings-Partien laufen einfach weiter).
+        # WICHTIG: hier auf cfg.eval_episodes NICHT deckeln (fruehere Version
+        # kappte bei 16 -- eval_episodes=20 haette also still 4 Partien
+        # "verloren", ohne dass es aufgefallen waere). Die Instanzen sind
+        # leicht, ein hoeherer eval_episodes-Wert kostet praktisch nichts.
         self._eval_games = [
             SnakeGame(self.game_cfg, rng=random.Random(base_seed + 10_000 + i))
-            for i in range(min(cfg.eval_episodes, 16))
+            for i in range(cfg.eval_episodes)
         ]
 
         # ---- Protokoll ------------------------------------------------- #
@@ -272,6 +342,15 @@ class MultiGameTrainer:
             )
         if tuple(checkpoint.get("hidden", ())) != tuple(self.cfg.hidden):
             raise ValueError("Der gespeicherte Bot hat eine andere Netzgroesse.")
+        # Fehlt "activation" (Checkpoints von vor dieser Aenderung), war die
+        # Aktivierung damals immer "tanh" -- das ist keine Vermutung, sondern
+        # der einzige Wert, den es je gab, bevor dieses Feld eingefuehrt wurde.
+        checkpoint_activation = checkpoint.get("activation", "tanh")
+        if checkpoint_activation != getattr(self.cfg, "activation", "tanh"):
+            raise ValueError(
+                f"Der gespeicherte Bot nutzt Aktivierung '{checkpoint_activation}', "
+                f"die aktuelle Einstellung ist '{self.cfg.activation}'."
+            )
         self.agent.load_state_dict(checkpoint["state_dict"])
         self.resumed_from = path
         self._resume_meta = checkpoint
@@ -400,7 +479,18 @@ class MultiGameTrainer:
         Tagebuch geschrieben -- das hier ist reine Messung, kein Training.
         """
         cfg = self.cfg
-        games = self._eval_games
+        # cfg.eval_episodes kann sich NACH dem Bau des Trainers geaendert
+        # haben (z.B. train_dqn.py setzt fuer die Abschluss-Pruefung kurz
+        # auf 30 hoch) -- ohne dieses Nachwachsen wuerde das wirkungslos
+        # verpuffen, weil _eval_games sonst bei der Anzahl von __init__()
+        # eingefroren bliebe.
+        if len(self._eval_games) < cfg.eval_episodes:
+            start = len(self._eval_games)
+            self._eval_games.extend(
+                SnakeGame(self.game_cfg, rng=random.Random(self.base_seed + 10_000 + start + i))
+                for i in range(cfg.eval_episodes - start)
+            )
+        games = self._eval_games[:cfg.eval_episodes]
         for g in games:
             g.reset()
 
@@ -448,7 +538,7 @@ class MultiGameTrainer:
     def _save_champion(self, eval_mean: float, eval_max: int) -> None:
         cfg = self.cfg
         self.champion_path = self.agent.save_checkpoint(
-            CHAMPION_PATH,
+            self.champion_file,
             {
                 "score": eval_max,
                 "eval_mean": eval_mean,

@@ -44,7 +44,9 @@ import pygame
 from game.config import Palette
 from game.fonts import load_font
 from ai.dqn.config import DQNConfig
-from ai.dqn.trainer import CHAMPION_PATH, DQNStats, MultiGameTrainer, load_champion_config
+from ai.dqn.trainer import (
+    DQNStats, MultiGameTrainer, load_champion_config, resolve_champion_path,
+)
 
 # ----------------------------- Fenster-Layout ------------------------------ #
 WIN_W, WIN_H = 1360, 900
@@ -57,6 +59,17 @@ MAX_DRAWN_BOARDS = 10
 
 # ------------------------- Einstellbare Presets ---------------------------- #
 # Nur die MENUE-Auswahl. Die volle Wahrheit steht in ai/dqn/config.py.
+# Bewusst UNGERADE Brettmasse (siehe TRAININGSPLAN.md A1/A2): auf einem Brett
+# mit ungerader Zellenzahl gibt es keinen geschlossenen Rundkurs durch alle
+# Felder -- der Bot kann sich also nie eine "sichere Endlosrunde" antrainieren.
+# Klein->Gross ist das Curriculum aus Abschnitt B3: 9x9 (Endspiel-Uebung) ->
+# 13x11 (Zwischenschritt) -> 17x15 (offizielle Google-Snake-Masse, Hauptbrett).
+BOARD_PRESETS = [
+    ("Klein (9×9)", (9, 9)),
+    ("Mittel (13×11)", (13, 11)),
+    ("Offiziell (17×15)", (17, 15)),
+    ("Klassisch (20×20)", (20, 20)),
+]
 NUM_GAMES_OPTIONS = [1, 2, 4, 5, 6, 8, 12, 16]
 PERCEPTION_PRESETS = [
     ("Reich (39 Werte)", "rich"),
@@ -129,8 +142,16 @@ class DQNDashboard:
         # Einstellungen des gespeicherten Champions zeigen, nicht die
         # Code-Standardwerte -- sonst waere ein Weitertrainieren aus dem
         # Fenster heraus inkonsistent zu dem, was den Champion stark gemacht
-        # hat (siehe load_champion_config in ai/dqn/trainer.py).
-        champion_cfg = load_champion_config() if resume else None
+        # hat (siehe load_champion_config in ai/dqn/trainer.py). Ohne
+        # explizite Brettauswahl gilt das Brett des uebergebenen/Standard-cfg.
+        self._resume_champion_path: str | None = None
+        champion_cfg = None
+        if resume:
+            probe = cfg or DQNConfig()
+            path = resolve_champion_path(probe.grid_cols, probe.grid_rows)
+            if path:
+                champion_cfg = load_champion_config(path)
+                self._resume_champion_path = path
         self.base_cfg = champion_cfg or cfg or DQNConfig()
         self._sync_menu_from_config(self.base_cfg)
         self.resume_on = champion_cfg is not None
@@ -184,6 +205,7 @@ class DQNDashboard:
         per Hand in config.py abweichend gesetzt wurde) -- dann greift der
         naechstliegende Fallback der jeweiligen Preset-Liste.
         """
+        self.board_idx = _preset_index(BOARD_PRESETS, (cfg.grid_cols, cfg.grid_rows), 2)
         self.games_idx = _index_of(NUM_GAMES_OPTIONS, cfg.num_games, 5)
         self.perc_idx = _preset_index(PERCEPTION_PRESETS, cfg.perception, 0)
         self.hidden_idx = _preset_index(HIDDEN_PRESETS, tuple(cfg.hidden), 1)
@@ -199,9 +221,11 @@ class DQNDashboard:
         if self.trainer is not None:
             entries.append(("◀ WEITER TRAINIEREN", None, "resume"))
         champ = "Ja" if self.resume_on else "Nein"
-        if not os.path.exists(CHAMPION_PATH):
-            champ = "— (noch kein Champion gespeichert)"
+        board_cols, board_rows = BOARD_PRESETS[self.board_idx][1]
+        if resolve_champion_path(board_cols, board_rows) is None:
+            champ = "— (noch kein Champion auf diesem Brett)"
         entries += [
+            ("Brettgröße", BOARD_PRESETS[self.board_idx][0], "brett"),
             ("Wahrnehmung", PERCEPTION_PRESETS[self.perc_idx][0], "perc"),
             ("Spiele gleichzeitig", str(NUM_GAMES_OPTIONS[self.games_idx]), "games"),
             ("Netzgröße", HIDDEN_PRESETS[self.hidden_idx][0], "hidden"),
@@ -240,7 +264,9 @@ class DQNDashboard:
 
     def _menu_adjust(self, kind: str, delta: int) -> None:
         self.menu_error = None
-        if kind == "games":
+        if kind == "brett":
+            self.board_idx = (self.board_idx + delta) % len(BOARD_PRESETS)
+        elif kind == "games":
             self.games_idx = (self.games_idx + delta) % len(NUM_GAMES_OPTIONS)
         elif kind == "perc":
             self.perc_idx = (self.perc_idx + delta) % len(PERCEPTION_PRESETS)
@@ -259,15 +285,24 @@ class DQNDashboard:
         elif kind == "fruit":
             self.fruit_idx = (self.fruit_idx + delta) % len(FRUIT_OPTIONS)
         elif kind == "cont":
-            turning_on = not self.resume_on and os.path.exists(CHAMPION_PATH)
+            board_cols, board_rows = BOARD_PRESETS[self.board_idx][1]
+            path = resolve_champion_path(board_cols, board_rows)
+            turning_on = not self.resume_on and path is not None
             self.resume_on = turning_on
             if turning_on:
                 # Weitertrainieren = Config exakt wie beim Champion-Run, nicht
                 # die gerade im Menue eingestellten (evtl. abweichenden) Werte.
-                champion_cfg = load_champion_config()
+                # Aendert der User DANACH die Brettgroesse-Zeile auf ein
+                # anderes Brett, wird daraus beim Start ein Brett-Transfer
+                # (siehe TRAININGSPLAN.md S0.4) -- Gewichte kommen mit,
+                # Rekorde starten neu.
+                champion_cfg = load_champion_config(path)
                 if champion_cfg is not None:
                     self.base_cfg = champion_cfg
-                    self._sync_menu_from_config(champion_cfg)
+                    self._sync_menu_from_config(champion_cfg)  # setzt auch board_idx
+                    self._resume_champion_path = path
+            else:
+                self._resume_champion_path = None
 
     # ------------------------- Laufendes Training --------------------- #
     def _on_run_key(self, key: int) -> None:
@@ -291,6 +326,7 @@ class DQNDashboard:
     def _start_training(self) -> None:
         base = self.base_cfg
         cfg = DQNConfig(**vars(base))       # alle Feineinstellungen uebernehmen
+        cfg.grid_cols, cfg.grid_rows = BOARD_PRESETS[self.board_idx][1]
         cfg.perception = PERCEPTION_PRESETS[self.perc_idx][1]
         cfg.num_games = NUM_GAMES_OPTIONS[self.games_idx]
         cfg.hidden = HIDDEN_PRESETS[self.hidden_idx][1]
@@ -301,7 +337,12 @@ class DQNDashboard:
         cfg.prioritized = self.per_on
         cfg.fruit_count = FRUIT_OPTIONS[self.fruit_idx]
 
-        resume = CHAMPION_PATH if self.resume_on else None
+        # self._resume_champion_path wurde beim Umschalten von "Champion
+        # weitertrainieren" (oder beim Fenster-Start mit --weiter) fest
+        # aufgeloest -- weicht die jetzt eingestellte Brettgroesse davon ab,
+        # wird daraus automatisch ein Brett-Transfer (trainer.py erkennt das
+        # am gespeicherten grid_cols/grid_rows im Checkpoint).
+        resume = self._resume_champion_path if self.resume_on else None
         try:
             self.trainer = MultiGameTrainer(cfg, log_to_csv=True, resume_from=resume)
         except (ValueError, OSError) as exc:
@@ -422,7 +463,11 @@ class DQNDashboard:
         pygame.draw.rect(self.screen, Palette.HEADER_BG, pygame.Rect(0, 0, WIN_W, HEADER_H))
         pygame.draw.line(self.screen, Palette.BORDER, (0, HEADER_H - 1), (WIN_W, HEADER_H - 1), 2)
 
-        title = self.f_h2.render(f"Episode {s.total_episodes}", Palette.TEXT)
+        title_text = f"Episode {s.total_episodes}   ·   Brett {self.cfg.grid_cols}×{self.cfg.grid_rows}"
+        if self.trainer is not None and self.trainer.board_transfer_from:
+            fc, fr = self.trainer.board_transfer_from
+            title_text += f"  (Transfer von {fc}×{fr})"
+        title = self.f_h2.render(title_text, Palette.TEXT)
         self.screen.blit(title, (PAD, 18))
 
         if self.paused:
