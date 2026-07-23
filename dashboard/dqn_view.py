@@ -220,10 +220,25 @@ class DQNDashboard:
         entries: list[tuple[str, str | None, str]] = []
         if self.trainer is not None:
             entries.append(("◀ WEITER TRAINIEREN", None, "resume"))
-        champ = "Ja" if self.resume_on else "Nein"
         board_cols, board_rows = BOARD_PRESETS[self.board_idx][1]
-        if resolve_champion_path(board_cols, board_rows) is None:
+        # WICHTIG: ist resume_on schon True, gilt das Champion-Ergebnis vom
+        # TOGGLE-Zeitpunkt (self._resume_champion_path) -- das darf sich
+        # NICHT einfach wieder umdrehen, nur weil man DANACH (fuer einen
+        # Brett-Transfer!) auf ein anderes Brett wechselt, das selbst noch
+        # keinen Champion hat. Ohne diese Unterscheidung zeigte die Zeile
+        # nach dem Brett-Wechsel faelschlich "kein Champion" an, obwohl der
+        # Transfer im Hintergrund laengst korrekt vorbereitet war (echter
+        # Bug, siehe Chat -- die Anzeige log, nicht die Logik).
+        if self.resume_on:
+            src_cols, src_rows = self.base_cfg.grid_cols, self.base_cfg.grid_rows
+            if (src_cols, src_rows) != (board_cols, board_rows):
+                champ = f"Ja (Transfer von {src_cols}×{src_rows})"
+            else:
+                champ = "Ja"
+        elif resolve_champion_path(board_cols, board_rows) is None:
             champ = "— (noch kein Champion auf diesem Brett)"
+        else:
+            champ = "Nein"
         entries += [
             ("Brettgröße", BOARD_PRESETS[self.board_idx][0], "brett"),
             ("Wahrnehmung", PERCEPTION_PRESETS[self.perc_idx][0], "perc"),
