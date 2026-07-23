@@ -243,6 +243,19 @@ class MultiGameTrainer:
         # S0.4): (altes_cols, altes_rows) wenn dieser Lauf ein Brett-Transfer
         # ist, sonst None. Nur fuers Dashboard/Log -- aendert kein Verhalten.
         self.board_transfer_from: tuple[int, int] | None = None
+        # Protokoll der Meilenstein-Zeitplaene (1.3/2.4/2.5) -- damit im
+        # Nachhinein exakt nachvollziehbar ist, WANN sich WAS geaendert hat.
+        self.milestone_log: list[dict] = []
+        # Rohdaten fuer den Post-Run-Report (ai/dqn/report.py): pro Episode
+        # (Laenge, Ursache, Kopf-x, Kopf-y, Score, Zuege).
+        self.episode_log: list[tuple] = []
+        # Q-Kalibrierung (TRAININGSPLAN.md 0.1): (vorhergesagter Start-Q-Wert,
+        # tatsaechlich erzielter Score) je Pruefpartie -- zeigt, ob das Netz
+        # sich selbst uebermaessig ueberschaetzt.
+        self.q_calibration_log: list[tuple[float, float]] = []
+        # Loss-Verlauf, einmal pro Pruefung mitgeschrieben (nicht jeden Tick,
+        # das waere zu viel) -- fuer die Report-Diagnose "Loss steigt".
+        self.loss_history: list[float] = []
 
         # ---- Weitertrainieren: Zaehler + Neugier aus dem Checkpoint holen -- #
         # OHNE das hier wuerde jeder --weiter-Lauf so tun, als waere der Bot
@@ -364,6 +377,10 @@ class MultiGameTrainer:
         # 1) EIN Netz-Durchlauf fuer alle Spiele gleichzeitig (epsilon-greedy).
         actions = self.agent.act_batch(self.states, self.epsilon)
 
+        # Einmal pro Tick berechnen (haengt nur von eval_best ab, nicht vom
+        # einzelnen Spiel) -- siehe TRAININGSPLAN.md 2.4.
+        formung_faktor = self.formung_faktor
+
         for i, game in enumerate(self.games):
             action_idx = int(actions[i])
             result = game.step_action(Action(action_idx))
@@ -393,12 +410,17 @@ class MultiGameTrainer:
 
             # 4) Belohnung berechnen (reines Feedback, siehe reward.py).
             reward = compute_reward(cfg, result.ate_fruit, died,
-                                    self.dists[i], dist_after)
+                                    self.dists[i], dist_after,
+                                    won=result.won, formung_faktor=formung_faktor)
 
             # 5) In die n-Schritt-Kette geben; fertige Ketten wandern ins
-            #    gemeinsame Tagebuch.
+            #    gemeinsame Tagebuch. game.length wird mitgereicht, damit der
+            #    Puffer spaeter gezielt einen Mindestanteil fortgeschrittener
+            #    (langer) Erfahrungen ziehen kann (Laengen-Balance, siehe
+            #    memory.py) -- ohne das bestuende das Tagebuch ueberwiegend
+            #    aus Fruehspiel-Zuegen, weil jede Partie bei Laenge 3 beginnt.
             for item in self.chains[i].push(self.states[i], action_idx, reward,
-                                            next_state, terminal):
+                                            next_state, terminal, game.length):
                 self.buffer.push(*item)
 
             # 6) Weiterschalten -- entweder naechste Situation oder neue Partie.
@@ -421,13 +443,18 @@ class MultiGameTrainer:
                     else 0.99 * self.loss_smoothed + 0.01 * loss
 
         # 8) Neugier linear abklingen lassen: viel ausprobieren -> vertrauen.
+        #    eps_end_active statt cfg.eps_end: sinkt zusaetzlich einmalig ab
+        #    einem Pruefungs-Meilenstein (TRAININGSPLAN.md 2.5) -- lange,
+        #    gut gespielte Partien sollen nicht mehr an einem uebrig-
+        #    gebliebenen Zufallszug sterben.
         progress = min(1.0, self.total_steps / max(1, cfg.eps_decay_steps))
-        self.epsilon = cfg.eps_start + (cfg.eps_end - cfg.eps_start) * progress
+        self.epsilon = cfg.eps_start + (self.eps_end_active - cfg.eps_start) * progress
 
         # 9) Faellige Pruefung? (kostet kurz Zeit, liefert den ehrlichen Wert)
         if self.total_episodes >= self._next_eval_at and len(self.buffer) >= cfg.min_buffer:
             self._next_eval_at = self.total_episodes + cfg.eval_every_episodes
             self.run_evaluation()
+            self._apply_lr_milestone()
 
     # ------------------------------------------------------------------ #
     # Episode abschliessen (Statistik + Neustart dieses einen Spiels)
@@ -445,6 +472,16 @@ class MultiGameTrainer:
         cause = "won" if won else (game.death_cause or "wall")
         self.deaths[cause] = self.deaths.get(cause, 0) + 1
         self.recent_causes.append(cause)
+
+        # Fuer den Post-Run-Report (TRAININGSPLAN.md 0.1): Laenge, Ursache,
+        # Todes-Position, Score, Zuege JEDER Episode -- das ist die Basis fuer
+        # "Todesursachen nach Schlangenlaenge", die Kernauswertung des
+        # Reports. game.head ist hier noch die Todesposition (reset() kommt
+        # erst weiter unten).
+        head_x, head_y = game.head
+        self.episode_log.append((game.length, cause, head_x, head_y, score, steps))
+        if len(self.episode_log) > 200_000:
+            self.episode_log = self.episode_log[::2]   # wie score_curve: halbieren statt endlos wachsen
 
         if score > self.best_score:
             self.best_score = score
@@ -499,7 +536,30 @@ class MultiGameTrainer:
         scores = [0] * len(games)
         steps = 0
 
-        while any(alive) and steps < cfg.eval_max_steps:
+        # Q-Kalibrierung (TRAININGSPLAN.md 0.1): was das Netz sich VOR der
+        # Partie selbst zutraut (bester Q-Wert im Startzustand), im Report
+        # spaeter gegen den TATSAECHLICH erzielten Score verglichen -- zeigt,
+        # ob das Netz sich systematisch ueber- oder unterschaetzt.
+        import torch
+        with torch.no_grad():
+            q_start = (
+                self.agent.policy_net(
+                    torch.from_numpy(np.ascontiguousarray(states, dtype=np.float32))
+                    .to(self.agent.device)
+                )
+                .max(dim=1).values.cpu().numpy()
+            )
+
+        # Wachsende Notbremse (TRAININGSPLAN.md 2.9): eval_max_steps=4000 ist
+        # fuer einen mittelmaessigen Bot grosszuegig, wuerde aber ab einem
+        # gewissen Niveau GUTE, lange Endspiel-Partien mitten im Vollmachen
+        # abschneiden -- wir wuerden also unseren eigenen Fortschritt
+        # kappen, ohne es zu merken. Die Grenze waechst deshalb mit dem
+        # bisher besten Pruefungs-Durchschnitt mit (Formel: 50 Schritte pro
+        # Punkt + 20 Punkte Puffer) und wird nie kleiner als der Config-Wert.
+        max_steps = max(cfg.eval_max_steps, int(50 * (self.eval_best + 20)))
+
+        while any(alive) and steps < max_steps:
             steps += 1
             idx_alive = [i for i, a in enumerate(alive) if a]
             actions = self.agent.act_batch(states[idx_alive], 0.0)
@@ -520,6 +580,12 @@ class MultiGameTrainer:
             if a:
                 scores[i] = games[i].score
 
+        self.q_calibration_log.extend(zip(q_start.tolist(), scores))
+        if len(self.q_calibration_log) > 20_000:
+            self.q_calibration_log = self.q_calibration_log[::2]
+        if self.loss_smoothed is not None:
+            self.loss_history.append(self.loss_smoothed)
+
         mean = sum(scores) / len(scores)
         self.eval_score = mean
         self.eval_max = max(self.eval_max, max(scores))
@@ -531,6 +597,67 @@ class MultiGameTrainer:
             self.eval_best = mean
             self._save_champion(mean, max(scores))
         return mean
+
+    # ================================================================== #
+    # Meilenstein-Zeitplaene (TRAININGSPLAN.md 1.3/2.4/2.5)
+    # ================================================================== #
+    # WICHTIG, Unterschied zu einem Auto-Tuner: Diese drei Mechanismen
+    # reagieren auf ein ERREICHTES Pruefungs-NIVEAU (self.eval_best), NICHT
+    # auf "hat sich seit X Episoden nicht verbessert". Sie sind deshalb
+    # deterministisch und reproduzierbar -- zwei Laeufe mit identischer
+    # Config nehmen IMMER denselben Weg, unabhaengig von Zufall/Rauschen in
+    # der Pruefung. Genau das war Lucas Bedingung: "smart", aber weiterhin
+    # exakt zurechenbar, welche Aenderung welche Wirkung hatte.
+    def _milestone_scale(self) -> float:
+        """Skaliert die (fuer 17x15 = 255 Zellen kalibrierten) Schwellen
+        proportional zur tatsaechlichen Feldflaeche -- sonst waeren sie auf
+        einem 9x9-Curriculum-Brett (max. 78 Punkte) nie erreichbar."""
+        return (self.cfg.grid_cols * self.cfg.grid_rows) / 255.0
+
+    @property
+    def formung_faktor(self) -> float:
+        """1.0 = volle Naeher/Weiter-Formung, 0.0 = komplett ausgeblendet.
+        Faellt linear zwischen formung_aus_ab und formung_null_ab (siehe
+        ai/dqn/reward.py fuer die Begruendung)."""
+        cfg = self.cfg
+        scale = self._milestone_scale()
+        aus_ab = cfg.formung_aus_ab * scale
+        null_ab = cfg.formung_null_ab * scale
+        if null_ab <= aus_ab:
+            return 0.0 if self.eval_best >= aus_ab else 1.0
+        frac = (null_ab - self.eval_best) / (null_ab - aus_ab)
+        return float(min(1.0, max(0.0, frac)))
+
+    @property
+    def eps_end_active(self) -> float:
+        """Der gerade geltende Neugier-Boden -- sinkt einmalig auf
+        eps_end_spaet, sobald eval_best die (brett-skalierte) Schwelle
+        eps_spaet_ab erreicht hat."""
+        cfg = self.cfg
+        if self.eval_best >= cfg.eps_spaet_ab * self._milestone_scale():
+            return cfg.eps_end_spaet
+        return cfg.eps_end
+
+    def _apply_lr_milestone(self) -> None:
+        """Nach jeder Pruefung: waehlt die hoechste bereits erreichte Stufe
+        aus cfg.lr_meilensteine und setzt die Optimizer-Lernrate darauf --
+        idempotent (kein Effekt, wenn schon der richtige Wert gilt), deshalb
+        ohne extra "schon gemacht"-Merker."""
+        cfg = self.cfg
+        scale = self._milestone_scale()
+        target_lr = cfg.learning_rate
+        for threshold, lr in sorted(cfg.lr_meilensteine):
+            if self.eval_best >= threshold * scale:
+                target_lr = lr
+        current_lr = self.agent.optimizer.param_groups[0]["lr"]
+        if abs(current_lr - target_lr) > 1e-12:
+            for group in self.agent.optimizer.param_groups:
+                group["lr"] = target_lr
+            self.milestone_log.append({
+                "episode": self.total_episodes,
+                "eval_best": self.eval_best,
+                "aenderung": f"Lernrate -> {target_lr}",
+            })
 
     # ------------------------------------------------------------------ #
     # Speichern & Protokoll
@@ -574,6 +701,15 @@ class MultiGameTrainer:
         path = os.path.join(LOG_DIR, f"dqn-{self._run_id}-config.json")
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(info, fh, indent=2, default=str, ensure_ascii=False)
+
+    def write_report(self) -> tuple[str, str]:
+        """Schreibt den Post-Run-Report (TRAININGSPLAN.md 0.1) neben CSV/JSON
+        desselben Laufs. Aufrufstellen: run_headless (finally, auch bei
+        Strg+C) und das Dashboard (Esc->Menue, Fenster schliessen)."""
+        from ai.dqn.report import write_report
+        os.makedirs(LOG_DIR, exist_ok=True)
+        path_base = os.path.join(LOG_DIR, f"dqn-{self._run_id}")
+        return write_report(self, path_base)
 
     def _log_row(self) -> None:
         """Schreibt alle 25 Episoden eine Zeile ins CSV-Protokoll."""

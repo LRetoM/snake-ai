@@ -190,6 +190,7 @@ class DQNDashboard:
     def _handle_events(self) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                self._write_report()
                 self.running = False
             elif event.type == pygame.KEYDOWN:
                 if self.state == DQNDashboard.MENU:
@@ -324,6 +325,7 @@ class DQNDashboard:
         if key == pygame.K_SPACE:
             self.paused = not self.paused
         elif key == pygame.K_ESCAPE:
+            self._write_report()
             self.state = DQNDashboard.MENU
             self.menu_row = 0
         elif key in (pygame.K_RIGHT, pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS):
@@ -334,6 +336,15 @@ class DQNDashboard:
             self.turbo = not self.turbo
         elif key == pygame.K_p and self.trainer is not None:
             self.trainer.run_evaluation()
+
+    def _write_report(self) -> None:
+        """Post-Run-Report (TRAININGSPLAN.md 0.1) -- bei Esc->Menue UND beim
+        Schliessen des Fensters, nicht nur beim Headless-Lauf-Ende. Ein
+        erneuter Aufruf (z.B. Esc, dann spaeter nochmal schliessen)
+        ueberschreibt einfach dieselbe Datei desselben Laufs."""
+        if self.trainer is not None:
+            _json_path, md_path = self.trainer.write_report()
+            print(f"Report: {md_path}")
 
     # ================================================================== #
     # Training starten

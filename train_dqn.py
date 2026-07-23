@@ -113,36 +113,44 @@ def run_headless(minutes: float, resume: bool, brett: str | None = None) -> None
     print(f"Laeuft {minutes:g} Minuten. Abbrechen mit Strg+C.\n")
 
     t_end = time.perf_counter() + minutes * 60
-    next_report = time.perf_counter() + 30
+    next_console_print = time.perf_counter() + 30
     last_moves, last_t = 0, time.perf_counter()
+    # Der Report (TRAININGSPLAN.md 0.1) wird IMMER geschrieben, egal wie der
+    # Lauf endet -- normal durchgelaufen, Strg+C, oder ein Fehler dazwischen.
+    # Sonst waere ausgerechnet ein abgebrochener Lauf der eine, ueber den man
+    # hinterher nichts mehr auswerten kann.
     try:
-        while time.perf_counter() < t_end:
-            for _ in range(500):
-                trainer.step()
-            now = time.perf_counter()
-            if now >= next_report:
-                next_report = now + 30
-                s = trainer.stats()
-                rate = (s.total_moves - last_moves) / (now - last_t)
-                last_moves, last_t = s.total_moves, now
-                pruefung = "—" if s.eval_score is None else f"{s.eval_score:5.1f}"
-                print(f"{int(s.elapsed) // 60:3d}:{int(s.elapsed) % 60:02d}  "
-                      f"Ep {s.total_episodes:6d}  "
-                      f"Pruefung {pruefung}  (best {s.eval_best:5.1f})  "
-                      f"Training Ø {s.mean_score:5.1f}  "
-                      f"eps {s.epsilon:.3f}  "
-                      f"{rate:6.0f} Zuege/s", flush=True)
-    except KeyboardInterrupt:
-        print("\nAbgebrochen.")
+        try:
+            while time.perf_counter() < t_end:
+                for _ in range(500):
+                    trainer.step()
+                now = time.perf_counter()
+                if now >= next_console_print:
+                    next_console_print = now + 30
+                    s = trainer.stats()
+                    rate = (s.total_moves - last_moves) / (now - last_t)
+                    last_moves, last_t = s.total_moves, now
+                    pruefung = "—" if s.eval_score is None else f"{s.eval_score:5.1f}"
+                    print(f"{int(s.elapsed) // 60:3d}:{int(s.elapsed) % 60:02d}  "
+                          f"Ep {s.total_episodes:6d}  "
+                          f"Pruefung {pruefung}  (best {s.eval_best:5.1f})  "
+                          f"Training Ø {s.mean_score:5.1f}  "
+                          f"eps {s.epsilon:.3f}  "
+                          f"{rate:6.0f} Zuege/s", flush=True)
+        except KeyboardInterrupt:
+            print("\nAbgebrochen.")
 
-    print("\nAbschluss-Pruefung laeuft ...")
-    trainer.cfg.eval_episodes = 30
-    final = trainer.run_evaluation()
-    print(f"Ergebnis: Pruefung Ø {final:.2f}   "
-          f"bester Pruefungsschnitt {trainer.eval_best:.2f}   "
-          f"beste Einzelpartie {max(trainer.best_score, trainer.eval_max)}")
-    print(f"Champion: {trainer.champion_path or '(noch keiner gespeichert)'}")
-    print("Zuschauen mit:  python watch_ai.py dqn")
+        print("\nAbschluss-Pruefung laeuft ...")
+        trainer.cfg.eval_episodes = 30
+        final = trainer.run_evaluation()
+        print(f"Ergebnis: Pruefung Ø {final:.2f}   "
+              f"bester Pruefungsschnitt {trainer.eval_best:.2f}   "
+              f"beste Einzelpartie {max(trainer.best_score, trainer.eval_max)}")
+        print(f"Champion: {trainer.champion_path or '(noch keiner gespeichert)'}")
+        print("Zuschauen mit:  python watch_ai.py dqn")
+    finally:
+        _json_path, md_path = trainer.write_report()
+        print(f"Report: {md_path}")
 
 
 def main() -> None:

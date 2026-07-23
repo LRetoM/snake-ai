@@ -451,6 +451,110 @@ for _window in (5, 7, 9):
     PERCEPTIONS[f"rich_grid{_window}"] = make_rich_grid_perception(_window)
 del _window
 
+
+# =========================================================================== #
+# SYMMETRIE-SPIEGELUNG (links-rechts) -- gratis doppelte Trainingsdaten
+# =========================================================================== #
+# Snake ist links-rechts spiegelsymmetrisch: jede egozentrische Erfahrung gilt
+# GESPIEGELT genauso (was rechts von der Schlange lag, liegt im Spiegelbild
+# links, und ein Rechts-Abbiegen im Original ist ein Links-Abbiegen im
+# Spiegelbild). Fuers Lernen heisst das: jede gezogene Erinnerung kann mit
+# 50% Wahrscheinlichkeit gespiegelt "wiederverwendet" werden, ohne dass die
+# Schlange dafuer einen einzigen Zug mehr spielen muss -- effektiv doppelte
+# Trainingsdaten geschenkt. Reine Trainings-Mechanik (ai/dqn/memory.py), an
+# der Wahrnehmung selbst aendert sich nichts.
+#
+# Fuer jede Wahrnehmung braucht es dafuer eine PERMUTATION + VORZEICHEN-MASKE:
+# gespiegelter_vektor = vektor[perm] * sign. Das funktioniert nur, weil alle
+# hier gespiegelten Wahrnehmungen EGOZENTRISCH sind (vorne/rechts/hinten/links
+# relativ zur Schlange) -- "full_board" ist dagegen ABSOLUT ausgerichtet und
+# enthaelt eine normierte Kopfposition, die sich nicht per simpler Permutation+
+# Vorzeichen spiegeln laesst (dafuer braeuchte es eine Verschiebung, kein
+# reines Umsortieren) -- deshalb bewusst NICHT in MIRROR_MAPS, solange diese
+# Wahrnehmung nicht aktiv im Einsatz ist.
+def _rich_mirror() -> tuple[np.ndarray, np.ndarray]:
+    """Spiegel-Permutation + Vorzeichen fuer die 39 "rich"-Werte.
+
+    Jeder 8er-Block (Wand/Koerper/Frucht in 8 Richtungen, siehe _RAY_OFFSETS)
+    wird um die Vorne-Hinten-Achse gespiegelt: [vorne, vorne-rechts, rechts,
+    hinten-rechts, hinten, hinten-links, links, vorne-links] wird zu [vorne,
+    vorne-links, links, hinten-links, hinten, hinten-rechts, rechts,
+    vorne-rechts] -- also Position k <- Original-Position (8-k) mod 8, kurz
+    [0,7,6,5,4,3,2,1]. Gefahr/Blickrichtung/Schwanz: rechts<->links tauschen,
+    geradeaus/vorne/hinten/oben/unten bleiben. Der Frucht-Rechts-Versatz
+    (Index 28) ist ein VORZEICHENBEHAFTETER Wert (nicht 0/1) -- beim Spiegeln
+    kehrt sich sein Vorzeichen um, statt nur die Position zu wechseln.
+    """
+    ray8 = [0, 7, 6, 5, 4, 3, 2, 1]
+    perm = (
+        ray8                                        # Wand      (0-7)
+        + [8 + k for k in ray8]                      # Koerper   (8-15)
+        + [16 + k for k in ray8]                      # Frucht    (16-23)
+        + [24, 26, 25]                                # Gefahr: geradeaus/rechts/links
+        + [27, 28]                                    # Frucht-Versatz vorne/rechts
+        + [29, 32, 31, 30]                            # Richtung: oben/rechts/unten/links
+        + [33, 36, 35, 34]                            # Schwanz: vorne/rechts/hinten/links
+        + [37, 38]                                    # Laenge, Hunger
+    )
+    sign = np.ones(RICH_INPUT_SIZE, dtype=np.float32)
+    sign[28] = -1.0   # Frucht-Rechts-Versatz kehrt sich beim Spiegeln um
+    return np.array(perm, dtype=np.int64), sign
+
+
+def _simple_mirror() -> tuple[np.ndarray, np.ndarray]:
+    """Spiegel-Permutation fuer die 11 "simple"-Werte (siehe FEATURE_LABELS):
+    Gefahr rechts<->links, Richtung rechts<->links, Frucht links<->rechts;
+    geradeaus/oben/unten bleiben. Alles hier sind 0/1-Flaggen -> kein
+    Vorzeichenwechsel noetig, reine Permutation."""
+    perm = [0, 2, 1, 3, 6, 5, 4, 8, 7, 9, 10]
+    return np.array(perm, dtype=np.int64), np.ones(INPUT_SIZE, dtype=np.float32)
+
+
+def _grid_mirror_local(window: int) -> np.ndarray:
+    """Spiegel-Permutation NUR fuer die window x window Nahbereichs-Karte
+    (lokale Indizes 0..window*window-1, siehe _local_grid): jede Zeile
+    (fester Vorne-Abstand) wird links-rechts umgedreht, die Zeilen-
+    Reihenfolge (vorne->hinten) bleibt."""
+    local = []
+    for r in range(window):
+        row_start = r * window
+        for j in range(window):
+            local.append(row_start + (window - 1 - j))
+    return np.array(local, dtype=np.int64)
+
+
+def _build_mirror_maps() -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    rich_perm, rich_sign = _rich_mirror()
+    simple_perm, simple_sign = _simple_mirror()
+    maps = {
+        "simple": (simple_perm, simple_sign),
+        "rich": (rich_perm, rich_sign),
+    }
+    for window in (5, 7, 9):
+        grid_perm = np.concatenate([rich_perm, RICH_INPUT_SIZE + _grid_mirror_local(window)])
+        grid_sign = np.concatenate([rich_sign, np.ones(window * window, dtype=np.float32)])
+        maps[f"rich_grid{window}"] = (grid_perm, grid_sign)
+    return maps
+
+
+MIRROR_MAPS: dict[str, tuple[np.ndarray, np.ndarray]] = _build_mirror_maps()
+
+# STRAIGHT (0) bleibt, LEFT (1) <-> RIGHT (2) tauschen -- unabhaengig von der
+# Wahrnehmung, weil das Action-Enum fuer alle gleich ist.
+ACTION_MIRROR = np.array([0, 2, 1], dtype=np.int64)
+
+
+def mirror_perception(name: str, vector: np.ndarray) -> np.ndarray | None:
+    """Spiegelt einen Wahrnehmungsvektor links-rechts, falls fuer `name` eine
+    Spiegelung definiert ist -- sonst None (aktuell nur "full_board" ohne,
+    siehe Kommentar oben bei MIRROR_MAPS)."""
+    entry = MIRROR_MAPS.get(name)
+    if entry is None:
+        return None
+    perm, sign = entry
+    return vector[perm] * sign
+
+
 # Wahrnehmungen, deren Eingangsgroesse von der Brettgroesse abhaengt (aktuell
 # nur "full_board") -- lassen sich nicht wie oben einmalig beim Modul-Import
 # vorberechnen. get_perception() braucht fuer sie zusaetzlich cols/rows.

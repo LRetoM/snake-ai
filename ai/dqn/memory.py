@@ -61,6 +61,8 @@ from collections import deque
 
 import numpy as np
 
+from ai.perception import ACTION_MIRROR, MIRROR_MAPS
+
 
 # =========================================================================== #
 # n-Schritt-Kette (eine pro Spiel)
@@ -85,7 +87,7 @@ class NStepChain:
         self.gamma = gamma
         self._items: deque = deque()
 
-    def push(self, state, action, reward, next_state, done) -> list:
+    def push(self, state, action, reward, next_state, done, snake_length: int = 0) -> list:
         """Nimmt einen Zug auf. Gibt die fertigen Erfahrungen zurueck (0, 1 oder
         -- am Partie-Ende -- mehrere).
 
@@ -97,10 +99,17 @@ class NStepChain:
         Situation nachtraeglich in die AKTUELLE verwandeln, und die KI wuerde
         aus voellig falschen Paaren lernen (der Fehler kostete im Vergleichs-
         test rund 90% der Spielstaerke -- und faellt sonst nirgends auf).
+
+        `snake_length` (neu): die Schlangenlaenge zu diesem Zeitpunkt -- wird
+        nur durchgereicht und landet im Puffer, damit dieser beim Lernen
+        gezielt einen Mindestanteil laenge-fortgeschrittener Erfahrungen
+        ziehen kann (siehe ReplayBuffer.balance_fraction). Reine
+        Trainings-Buchhaltung, die KI selbst sieht diesen Wert nie.
         """
         self._items.append((np.array(state, dtype=np.float32),
                             action, reward,
-                            np.array(next_state, dtype=np.float32), done))
+                            np.array(next_state, dtype=np.float32), done,
+                            snake_length))
         ready = []
 
         if done:
@@ -116,16 +125,17 @@ class NStepChain:
             self._items.popleft()
         return ready
 
-    def _make(self, length: int):
-        """Fasst die ersten `length` gepufferten Zuege zu einer Erfahrung zusammen."""
+    def _make(self, n_items: int):
+        """Fasst die ersten `n_items` gepufferten Zuege zu einer Erfahrung zusammen."""
         state, action = self._items[0][0], self._items[0][1]
+        snake_length = self._items[0][5]
         total = 0.0
         discount = 1.0
-        for i in range(length):
+        for i in range(n_items):
             total += discount * self._items[i][2]
             discount *= self.gamma
-        last = self._items[length - 1]
-        return (state, action, total, last[3], last[4], discount)
+        last = self._items[n_items - 1]
+        return (state, action, total, last[3], last[4], discount, snake_length)
 
     def clear(self) -> None:
         self._items.clear()
@@ -147,10 +157,25 @@ class ReplayBuffer:
     """
 
     def __init__(self, capacity: int, state_size: int,
-                 rng: np.random.Generator | None = None) -> None:
+                 rng: np.random.Generator | None = None,
+                 balance_min_length: int = 0, balance_fraction: float = 0.0,
+                 mirror_perm: np.ndarray | None = None,
+                 mirror_sign: np.ndarray | None = None,
+                 mirror_fraction: float = 0.0) -> None:
         self.capacity = int(capacity)
         self.state_size = int(state_size)
         self.rng = rng or np.random.default_rng()
+
+        # Symmetrie-Verdopplung (TRAININGSPLAN.md 2.6): Snake ist links-rechts
+        # spiegelsymmetrisch -- gratis doppelte Trainingsdaten, indem gezogene
+        # Erinnerungen mit `mirror_fraction` Wahrscheinlichkeit gespiegelt
+        # verwendet werden (Zustand+Folgezustand permutiert, Aktion getauscht).
+        # `mirror_perm`/`mirror_sign` kommen aus ai.perception.MIRROR_MAPS und
+        # sind None, wenn die aktuelle Wahrnehmung keine Spiegelung definiert
+        # hat (aktuell nur "full_board") -- dann bleibt Spiegeln aus.
+        self.mirror_perm = mirror_perm
+        self.mirror_sign = mirror_sign
+        self.mirror_fraction = float(mirror_fraction) if mirror_perm is not None else 0.0
 
         self.states = np.zeros((self.capacity, self.state_size), dtype=np.float32)
         self.next_states = np.zeros((self.capacity, self.state_size), dtype=np.float32)
@@ -158,20 +183,46 @@ class ReplayBuffer:
         self.rewards = np.zeros(self.capacity, dtype=np.float32)
         self.dones = np.zeros(self.capacity, dtype=np.float32)
         self.discounts = np.zeros(self.capacity, dtype=np.float32)
+        self.lengths = np.zeros(self.capacity, dtype=np.int32)
+
+        # Laengen-balanciertes Lernen (TRAININGSPLAN.md 2.1): ohne das besteht
+        # der Puffer ueberwiegend aus FRUEHSPIEL-Zuegen (jede Partie startet ja
+        # bei Laenge 3) -- die seltenen, wichtigen Endspiel-Erfahrungen (lange
+        # Schlange, Einsperr-Gefahr) gehen beim zufaelligen Ziehen unter. Ab
+        # `balance_min_length` gilt ein Zug als "fortgeschritten"; davon
+        # erzwingt `balance_fraction` einen MINDESTANTEIL pro Lern-Batch
+        # (0 = deaktiviert = altes Verhalten). `_long_indices` haelt die
+        # Ringpuffer-Positionen, die GERADE eine solche Erfahrung enthalten,
+        # inkrementell aktuell (siehe push()) -- so muss beim Ziehen nicht
+        # jedes Mal der ganze Puffer durchsucht werden.
+        self.balance_min_length = int(balance_min_length)
+        self.balance_fraction = float(balance_fraction)
+        self._long_indices: set[int] = set()
 
         self._index = 0
         self._size = 0
 
     # ---------------------------------------------------------------- #
-    def push(self, state, action, reward, next_state, done, discount) -> None:
+    def push(self, state, action, reward, next_state, done, discount,
+              snake_length: int = 0) -> None:
         """Legt EINE Erfahrung ins Tagebuch (ueberschreibt ggf. die aelteste)."""
         i = self._index
+        # Erst pruefen, was an dieser Stelle VORHER stand (falls der Ring schon
+        # einmal herum ist) -- so bleibt _long_indices beim Ueberschreiben
+        # korrekt, ohne den ganzen Puffer neu durchsuchen zu muessen.
+        was_long = self.lengths[i] >= self.balance_min_length
         self.states[i] = state
         self.actions[i] = action
         self.rewards[i] = reward
         self.next_states[i] = next_state
         self.dones[i] = 1.0 if done else 0.0
         self.discounts[i] = discount
+        self.lengths[i] = snake_length
+        now_long = snake_length >= self.balance_min_length
+        if was_long and not now_long:
+            self._long_indices.discard(i)
+        elif now_long and not was_long:
+            self._long_indices.add(i)
         self._on_push(i)
         self._index = (i + 1) % self.capacity
         self._size = min(self._size + 1, self.capacity)
@@ -181,16 +232,33 @@ class ReplayBuffer:
 
     # ---------------------------------------------------------------- #
     def sample(self, batch_size: int):
-        """Zieht `batch_size` zufaellige Erfahrungen -- alle gleich wahrscheinlich.
+        """Zieht `batch_size` zufaellige Erfahrungen.
+
+        Ohne Laengen-Balance (balance_fraction=0): alle gleich wahrscheinlich,
+        wie bisher. Mit Balance: ein Mindestanteil kommt GEZIELT aus Zuegen mit
+        Laenge >= balance_min_length (mit Zuruecklegen, falls davon weniger im
+        Puffer sind als angefordert -- kein Absturz, einfach eine kleinere
+        Beimischung). Der Rest wird wie gewohnt gleichverteilt gezogen (kann
+        durch Zufall ohnehin auch "lange" Eintraege treffen -- der tatsaechliche
+        Anteil im Batch ist also >= balance_fraction, nie weniger).
 
         Rueckgabe: (states, actions, rewards, next_states, dones, discounts,
                     indices, weights). `weights` sind hier alle 1.0; die Felder
                     gibt es, damit der Agent beide Puffer-Arten gleich behandeln
                     kann.
         """
-        idx = self.rng.integers(0, self._size, size=batch_size)
+        if self.balance_fraction > 0 and self._long_indices:
+            n_long = min(int(round(batch_size * self.balance_fraction)),
+                         batch_size)
+            long_pool = np.fromiter(self._long_indices, dtype=np.int64,
+                                     count=len(self._long_indices))
+            long_idx = self.rng.choice(long_pool, size=n_long, replace=True)
+            rest_idx = self.rng.integers(0, self._size, size=batch_size - n_long)
+            idx = np.concatenate([long_idx, rest_idx])
+        else:
+            idx = self.rng.integers(0, self._size, size=batch_size)
         weights = np.ones(batch_size, dtype=np.float32)
-        return self._gather(idx, weights)
+        return self._mirror_batch(self._gather(idx, weights))
 
     def _gather(self, idx, weights):
         return (
@@ -198,6 +266,23 @@ class ReplayBuffer:
             self.next_states[idx], self.dones[idx], self.discounts[idx],
             idx, weights,
         )
+
+    def _mirror_batch(self, batch):
+        """Spiegelt einen zufaelligen Teil des gezogenen Batches (siehe
+        mirror_fraction in __init__) -- gratis doppelte Trainingsdaten ohne
+        einen einzigen Zug mehr zu spielen. `states`/`next_states` kommen aus
+        Fancy-Indexing (`self.states[idx]`) und sind damit schon EIGENE
+        Kopien, kein In-Place auf die Pufferzeilen selbst.
+        """
+        if self.mirror_fraction <= 0:
+            return batch
+        states, actions, rewards, next_states, dones, discounts, idx, weights = batch
+        mask = self.rng.random(len(actions)) < self.mirror_fraction
+        if mask.any():
+            states[mask] = states[mask][:, self.mirror_perm] * self.mirror_sign
+            next_states[mask] = next_states[mask][:, self.mirror_perm] * self.mirror_sign
+            actions[mask] = ACTION_MIRROR[actions[mask]]
+        return states, actions, rewards, next_states, dones, discounts, idx, weights
 
     def update_priorities(self, idx, td_errors) -> None:
         """Nur fuer die priorisierte Variante relevant -- hier passiert nichts."""
@@ -357,11 +442,32 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
 # =========================================================================== #
 def make_buffer(cfg, state_size: int, rng: np.random.Generator | None = None):
-    """Baut den in der Config gewaehlten Puffer-Typ."""
+    """Baut den in der Config gewaehlten Puffer-Typ.
+
+    Laengen-Balance UND Symmetrie-Spiegelung gelten bewusst NUR fuer den
+    normalen Puffer -- der priorisierte hat sein eigenes, unabhaengig
+    gemessenes Auswahlverfahren (siehe TRAININGSPLAN.md 2.1/2.8: ein Retest
+    kommt erst NACH der Laengen-Balance, nicht gleichzeitig damit).
+    """
     if getattr(cfg, "prioritized", False):
         return PrioritizedReplayBuffer(
             cfg.buffer_size, state_size,
             alpha=cfg.per_alpha, beta_start=cfg.per_beta_start,
             beta_steps=cfg.per_beta_steps, rng=rng,
         )
-    return ReplayBuffer(cfg.buffer_size, state_size, rng=rng)
+    mirror_perm = mirror_sign = None
+    mirror_fraction = 0.0
+    if getattr(cfg, "spiegel_lernen", False):
+        entry = MIRROR_MAPS.get(cfg.perception)
+        # entry ist None fuer Wahrnehmungen ohne definierte Spiegelung
+        # (aktuell nur "full_board") -- dann bleibt Spiegeln einfach aus.
+        if entry is not None:
+            mirror_perm, mirror_sign = entry
+            mirror_fraction = 0.5
+    return ReplayBuffer(
+        cfg.buffer_size, state_size, rng=rng,
+        balance_min_length=getattr(cfg, "balance_min_laenge", 0),
+        balance_fraction=getattr(cfg, "balance_anteil", 0.0),
+        mirror_perm=mirror_perm, mirror_sign=mirror_sign,
+        mirror_fraction=mirror_fraction,
+    )

@@ -13,56 +13,107 @@ Dieses Dokument hat drei Teile:
 
 ---
 
-## UMSETZUNGSSTAND (2026-07-23, von Sonnet 5)
+## UMSETZUNGSSTAND (2026-07-23, von Sonnet 5 — 2. Runde)
 
-**Fertig, getestet, einsatzbereit:**
-- **S0.1** Neue Defaults `grid_cols=17, grid_rows=15` in `ai/dqn/config.py`.
-- **S0.2** `full_board` ist jetzt brettgrößen-dynamisch (`make_full_board_perception`,
-  `get_perception(name, cols, rows)`). Kein Absturz mehr bei anderen Brettgrößen.
-- **S0.3** Jede Brettgröße hat ihre eigene Champion-Datei
-  (`champion_path()`/`resolve_champion_path()` in `ai/dqn/trainer.py`,
-  Schema `dqn_champion_<cols>x<rows>.pt`). Alte `dqn_champion.pt` (20×20)
-  wird als Legacy-Lesepfad weiter erkannt.
-- **S0.4** Menü-Zeile "Brettgröße" (9×9 / 13×11 / 17×15 / 20×20) +
-  Brett-Transfer beim Weitertrainieren (Gewichte + Ticks kommen mit,
-  Rekorde starten neu) — siehe Bedienungsanleitung Teil B3.
-- **S0.5** CLI `--brett SPALTENxZEILEN` in `train_dqn.py` (nur mit
-  `--headless`; im Fenster die Menü-Zeile benutzen).
-- **Phase 1.1** `activation`-Feld (relu/tanh) in Netz + Config + Checkpoint,
-  DQN-Default jetzt `relu`, Neuroevolution bleibt `tanh`.
-- **Phase 0.3 (Teil)**: `eval_episodes` 10→20 gesetzt. Dabei einen ECHTEN
-  Bug fest gemacht und mitgefixt: `_eval_games` war auf `min(eval_episodes,
-  16)` gedeckelt UND wurde bei einer nachträglichen Änderung von
-  `cfg.eval_episodes` (z.B. die Abschluss-Prüfung mit 30 Partien in
-  `train_dqn.py`) nie neu aufgebaut — beides lief bisher STILL SCHWEIGEND
-  mit weniger Partien als eingestellt, ohne Fehlermeldung. Jetzt wächst
-  `_eval_games` bei Bedarf nach.
-- 2 vorbestehende Bugs aus einer früheren Session (Config-Reset bei
-  `--weiter`, Champion-Überschreib-Schutz) sind weiterhin aktiv und wurden
-  in diesem Umbau mitgezogen (jetzt pro Brett statt global).
+### Runde 1 (Brett-Infrastruktur + ReLU)
+- **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
+  brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,
+  cols, rows)`); Champion-Datei pro Brettgröße (`champion_path()`/
+  `resolve_champion_path()` in `ai/dqn/trainer.py`, Schema
+  `dqn_champion_<cols>x<rows>.pt`, alte `dqn_champion.pt` als Legacy-Lesepfad);
+  Menü-Zeile "Brettgröße" + Brett-Transfer beim Weitertrainieren; CLI
+  `--brett SPALTENxZEILEN` (nur `--headless`).
+- **Phase 1.1**: `activation`-Feld (relu/tanh), DQN-Default `relu`,
+  Neuroevolution bleibt `tanh`.
+- **Bugfix (nach Rückmeldung)**: Menü-Zeile "Champion weitertrainieren"
+  zeigte nach einem Brett-Wechsel fälschlich "kein Champion an", obwohl der
+  Transfer intern korrekt vorbereitet war (reine Anzeige-Logik, nicht die
+  eigentliche Resume-Funktion) — gefixt, zeigt jetzt "Ja (Transfer von AxB)".
+- **Bugfix**: `_eval_games` war auf `min(eval_episodes, 16)` gedeckelt und
+  wuchs bei nachträglicher Änderung von `cfg.eval_episodes` (z.B. die
+  Abschluss-Prüfung in `train_dqn.py`) nie nach — lief still mit weniger
+  Partien als eingestellt. Jetzt behoben, `eval_episodes` 10→20.
 
-**Verifiziert mit Smoke-Tests** (nicht Teil des Repos, im Chat ausgeführt):
-Brett-Transfer 9×9→13×11 (Gewichte+Ticks übernommen, Rekorde bei 0,
-Epsilon korrekt neu berechnet), Überschreib-Schutz pro Brett, ReLU/tanh
-Round-Trip inkl. alter Checkpoints ohne `activation`-Feld, kompletter
-frischer 17×15-Lauf mit den neuen Defaults, `watch_ai.py`-Champion-Suche.
-Alle `.py`-Dateien im Projekt kompilieren fehlerfrei.
+### Runde 2 (Phase 2 + Report-System, auf Lucas Wunsch: "smart aber
+zurechenbar" — deterministische Meilenstein-Zeitpläne statt reaktivem
+Auto-Tuner)
+- **Phase 2.1** Längen-balanciertes Lernen: `ReplayBuffer` trackt jetzt die
+  Schlangenlänge pro Eintrag (`NStepChain`/`push()` erweitert) und erzwingt
+  `balance_anteil` (Default 0.3) Mindestanteil an Zügen mit Länge ≥
+  `balance_min_laenge` (30) pro Lern-Batch. `buffer_size` 100k → **1 Mio**
+  (Luca-Wunsch, siehe Chat-Begründung: ~700MB RAM, 300k-Puffer rotiert bei
+  15-20k Zügen/s in nur ~15-20 Sekunden komplett durch — bei 1 Mio. wächst
+  das Zeitfenster auf ~1 Minute).
+- **Phase 2.6** Symmetrie-Verdopplung: `ai/perception.py` hat jetzt
+  `MIRROR_MAPS` (Permutation+Vorzeichen je Wahrnehmung: simple, rich,
+  rich_grid5/7/9 — bewusst NICHT für full_board, siehe Code-Kommentar) +
+  `mirror_perception()` + `ACTION_MIRROR`. `ReplayBuffer.sample()` spiegelt
+  mit 50% Wahrscheinlichkeit (`cfg.spiegel_lernen`, Default an) Zustand +
+  Folgezustand + Aktion gemeinsam. **Abnahmetest wie im Plan gefordert**:
+  250 Zufalls-Spielzustände x-gespiegelt und mit `mirror_perception(...)`
+  verglichen — exakte Übereinstimmung (atol 1e-6).
+- **Phase 2.9** Wachsende Prüf-Notbremse: `eval_max_steps` in
+  `run_evaluation()` jetzt `max(cfg.eval_max_steps, 50*(eval_best+20))` —
+  deckelt zukünftigen Erfolg nicht mehr selbst.
+- **Phase 1.3/2.4/2.5 — Meilenstein-Zeitpläne** (NEU gegenüber Original-Plan:
+  bewusst als deterministische, an `eval_best` gekoppelte Funktionen gebaut,
+  nicht als "reagiert auf Stillstand"-Auto-Tuner — das war explizit Lucas
+  Entscheidung im Chat):
+  - `MultiGameTrainer.formung_faktor` (Property): Näher/Weiter-Formung
+    faded linear zwischen `formung_aus_ab`/`formung_null_ab` aus.
+  - `MultiGameTrainer.eps_end_active` (Property): Neugier-Boden sinkt ab
+    `eps_spaet_ab` auf `eps_end_spaet`.
+  - `MultiGameTrainer._apply_lr_milestone()`: setzt die Optimizer-Lernrate
+    auf die höchste erreichte Stufe aus `cfg.lr_meilensteine`.
+  - `reward_win` (neu, Default 100): Sieg-Bonus zusätzlich zur Frucht-Belohnung.
+  - Alle Schwellen sind für 17×15 (255 Zellen) kalibriert und werden über
+    `_milestone_scale()` proportional zur Feldfläche skaliert — sonst auf
+    kleinen Curriculum-Brettern (9×9 = 78 max. Punkte) nie erreichbar.
+  - Jede Änderung landet in `trainer.milestone_log` (Episode, eval_best,
+    was geändert wurde) → erscheint im Report.
+- **Phase 0.1 Post-Run-Report** (`ai/dqn/report.py`, neu): `write_report()`
+  erzeugt `logs/dqn-<runid>-report.json` + `-report.md` mit **Todesursachen
+  nach Schlangenlängen-Eimer** (die Kernauswertung — Wand/Selbst/Verhungert/
+  Sieg % + Zbuilt/Frucht je 10er-Eimer), Score-Histogramm, Todes-Positions-
+  Raster für Selbstkollisionen, Q-Kalibrierung (vorhergesagter Start-Q vs.
+  tatsächlicher Score), Meilenstein-Protokoll, Config-Abweichungen vom
+  Standard, und automatische Diagnose-Texte (Selbstkollision >60% in einem
+  Eimer ≥30, Prüfung stagniert über 5 Prüfungen, Loss steigt) — **rein
+  meldend, kein Eingriff**. Aufrufstellen: `train_dqn.py` (`try/finally`,
+  greift auch bei Strg+C), Dashboard bei Esc→Menü UND beim Fenster-Schließen.
+  `MultiGameTrainer.write_report()` ist der Einstiegspunkt.
 
-**Bewusst NICHT umgesetzt in dieser Runde** (Zeitgründe — nächste Session):
-- **Phase 0.1** Post-Run-Report (Todesursachen nach Längen-Eimern usw.) —
-  der wertvollste noch fehlende Baustein für datenbasierte Entscheidungen.
-- **Phase 0.3 (Rest)**: die doppelte Bestätigungs-Prüfung vor
-  Champion-Speicherung (nur die Episoden-Zahl wurde erhöht).
-- **Phase 0.2, 0.4, 0.5**: Einsperr-Analyse, Meilenstein-Bibliothek, A/B-Runner.
-- **Phase 1.2/1.3**: Dueling-Kopf, Lernraten-Treppe.
-- **Phase 2 komplett**: Längen-Balance, Curriculum, Formung-Ausblendung +
-  Sieg-Bonus, Neugier-Boden, Symmetrie-Verdopplung, wachsende Prüf-Notbremse.
+**Verifiziert mit Smoke-Tests** (im Chat ausgeführt, nicht Teil des Repos):
+Puffer-Balance (Anteil ~50%±5 bei Ziel 50%, `_long_indices` bleibt nach
+Ring-Überschreiben korrekt), Spiegel-Korrektheit (250 Vergleiche über 5
+Wahrnehmungen), Spiegel-im-Sample (interne Pufferzeilen bleiben nach vielen
+`sample()`-Aufrufen unverändert — keine In-Place-Mutation), alle drei
+Meilenstein-Mechanismen (Property-Werte + tatsächliches Feuern in einem
+echten 15.000-Tick-Lauf), Report-Erzeugung inkl. Eimer-Summen == Gesamt-
+Episoden, kompletter End-to-End-Lauf mit ALLEN neuen Mechanismen
+gleichzeitig + Brett-Transfer 9×9→13×11, Neuroevolution-Regressionstest
+(bleibt tanh, Genom-Roundtrip unverändert), `watch_ai.py` findet/lädt den
+richtigen Champion. Alle `.py`-Dateien im Projekt kompilieren fehlerfrei.
+
+**Bewusst NICHT umgesetzt** (auf der Sperrliste C-9 oder Zeitgründe):
+- **Phase 2.2** Endspiel-Curriculum (Meister-Stellungen) — wartet laut Plan
+  explizit auf Lucas OK, nicht angefasst.
+- **Auto-Tuner** (reaktiv auf Stillstand) — von Luca explizit abgelehnt.
+- **Phase 0.2** Einsperr-Analyse (Flood-Fill NUR als Post-Mortem-Telemetrie).
+- **Phase 0.4/0.5** Meilenstein-Bibliothek (Checkpoints pro Füllgrad), A/B-Runner-Skript.
+- **Phase 0.3 (Rest)**: doppelte Bestätigungs-Prüfung vor Champion-Speicherung.
+- **Phase 1.2** Dueling-Kopf.
+- **Phase 2.7/2.8**: gamma-A/B, PER-Retest (reine Experimente, kein Code nötig).
 - **Phase 3**: alle Performance-Optimierungen (Board-Zeichnen-Drossel etc.).
-- **Phase 4**: CNN (wie geplant separat, erst nach Messung von 0-2).
+- **Phase 4**: CNN (separat geplant, erst nach Messung von 0-2).
 
-**Nächster empfohlener Schritt:** Phase 0.1 (Post-Run-Report), weil jede
-weitere Änderung (Phase 2) ohne die Längen-Eimer-Auswertung nur schwer zu
-beurteilen ist.
+**Nächster empfohlener Schritt:** den 8h-Lauf jetzt fahren (alle
+Kernmechanismen gegen das Plateau sind aktiv) und danach den Report lesen —
+der zeigt bereits in einem 12.000-Tick-Testlauf exakt das erwartete Muster
+(Selbstkollision steigt von 23% bei Länge 0-9 auf 100% bei Länge 50+).
+Passt das Muster zum erwarteten Verlauf, ist Phase 3 (Performance) oder
+Phase 4 (CNN) der nächste sinnvolle Schritt; zeigt der Report etwas
+Unerwartetes, entscheiden wir datenbasiert von dort aus weiter.
 
 ---
 

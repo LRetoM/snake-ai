@@ -93,6 +93,15 @@ class DQNConfig:
     # Lernen (Gradientenabstieg mit PyTorch)
     # ------------------------------------------------------------------ #
     learning_rate: float = 1e-3     # wie grosse Lernschritte gemacht werden
+    # TRAININGSPLAN.md 1.3: sobald der Pruefungs-Bestwert eine Schwelle
+    # erreicht, sinkt die Lernrate EINMALIG (nicht schleichend) auf den
+    # zugehoerigen Wert -- feiner Schliff statt grober Schritte, wenn der Bot
+    # schon gut spielt. DETERMINISTISCH (an ein erreichtes Niveau gekoppelt),
+    # NICHT reaktiv auf Stillstand -- deshalb bleibt exakt nachvollziehbar,
+    # was diese Aenderung bewirkt hat (siehe Log in MultiGameTrainer).
+    # Schwellen sind fuer 17x15 (255 Zellen) kalibriert und werden fuer
+    # andere Brettgroessen proportional zur Feldflaeche skaliert.
+    lr_meilensteine: tuple = ((90.0, 3e-4), (130.0, 1e-4))
     # 0.97 statt 0.95: weitsichtiger, Teil derselben gemessenen Bestkombi --
     # bei 3 Fruechten und laengeren Partien zahlt sich mehr Weitsicht aus.
     gamma: float = 0.97
@@ -105,8 +114,41 @@ class DQNConfig:
     # uebernommen, obwohl der isolierte Effekt von n_step allein unklar bleibt.
     n_step: int = 3
     batch_size: int = 256           # so viele Tagebuch-Eintraege pro Lernschritt
-    buffer_size: int = 100_000      # Groesse des Tagebuchs (aelteste fallen raus)
+    # 1.000.000 statt 100k: bei ~15-20k Zuegen/s rotiert selbst ein 300k-Puffer
+    # in ~15-20 SEKUNDEN einmal komplett durch -- bei einem 8h-Lauf ist das
+    # Tagebuch also immer nur ein winziges, sehr aktuelles Zeitfenster. Mit
+    # 1 Mio. waechst dieses Fenster auf ~1 Minute und es sind deutlich mehr der
+    # SELTENEN langen Partien gleichzeitig im Umlauf, bevor sie ueberschrieben
+    # werden -- direkt wichtig fuers Laengen-balancierte Lernen unten. Kostet
+    # ~700 MB RAM (bei rich_grid7, 88 Werte) -- auf jedem halbwegs aktuellen
+    # Rechner unproblematisch.
+    buffer_size: int = 1_000_000    # Groesse des Tagebuchs (aelteste fallen raus)
     min_buffer: int = 2_000         # erst lernen, wenn so viel Erfahrung da ist
+    # ------------------------------------------------------------------ #
+    # Laengen-balanciertes Lernen (TRAININGSPLAN.md 2.1) -- der wichtigste
+    # Hebel gegen das Endspiel-Plateau
+    # ------------------------------------------------------------------ #
+    # Jede Partie startet bei Laenge 3 -- ohne Gegenmassnahme besteht das
+    # Tagebuch deshalb ueberwiegend aus Fruehspiel-Zuegen, die der Bot laengst
+    # beherrscht. Die seltenen, lehrreichen Endspiel-Zuege (Laenge >= X, wo
+    # Einsperr-Gefahr entsteht) gehen beim rein zufaelligen Ziehen unter --
+    # der Bot uebt also hauptsaechlich, was er schon kann. Ab balance_anteil=0
+    # ist das komplett abgeschaltet (altes Verhalten).
+    balance_min_laenge: int = 30    # ab dieser Laenge gilt ein Zug als "fortgeschritten"
+    balance_anteil: float = 0.3     # Mindestanteil solcher Zuege pro Lern-Batch
+
+    # ------------------------------------------------------------------ #
+    # Symmetrie-Verdopplung (TRAININGSPLAN.md 2.6)
+    # ------------------------------------------------------------------ #
+    # Snake ist links-rechts spiegelsymmetrisch: eine Erfahrung "rechts war
+    # Gefahr, ich bin nach links abgebogen" gilt gespiegelt genauso ("links
+    # war Gefahr, ich bin nach rechts abgebogen"). Beim Lernen wird deshalb
+    # ein Teil der gezogenen Erinnerungen gespiegelt verwendet -- doppelte
+    # effektive Trainingsdaten, ohne einen einzigen Zug mehr zu spielen. Gilt
+    # nur fuer Wahrnehmungen mit definierter Spiegelung (ai/perception.py,
+    # MIRROR_MAPS) -- fuer "full_board" bleibt es automatisch aus.
+    spiegel_lernen: bool = True
+
     train_every: int = 1            # nur bei jedem N-ten Tick lernen (2 = doppelter
                                     # Spiel-Durchsatz, halb so viele Lernschritte)
     train_iters_per_step: int = 1   # Lernschritte pro Lern-Tick
@@ -143,6 +185,13 @@ class DQNConfig:
     # bevor die Neugier abgeschaltet wird, zahlt sich mit mehr Spielen/groesserem
     # Netz aus.
     eps_decay_steps: int = 80_000   # linear von start->end ueber so viele Ticks
+    # TRAININGSPLAN.md 2.5: ab dem Pruefungs-Meilenstein eps_spaet_ab sinkt der
+    # Neugier-BODEN weiter auf eps_end_spaet. Grund: bei langen Partien toetet
+    # ein einziger uebriggebliebener Zufallszug oft eine lange, gut gespielte
+    # Schlange -- das verseucht ausserdem das Tagebuch mit "unverschuldeten"
+    # Toden, aus denen der Bot die falsche Lehre zieht.
+    eps_end_spaet: float = 0.005
+    eps_spaet_ab: float = 70.0       # Pruefungs-Schwelle (fuer 17x15 kalibriert)
 
     # ------------------------------------------------------------------ #
     # Belohnung = das Lernsignal (LEBT HIER, NICHT IM SPIEL!)
@@ -154,6 +203,19 @@ class DQNConfig:
     reward_step: float = -0.01      # winzige Zeitstrafe je Zug (gegen Troedeln)
     reward_closer: float = 0.1      # naeher an die naechste Frucht gekommen
     reward_farther: float = -0.12   # weiter weg (leicht haerter -> gegen Kreisrennen)
+    # Zusaetzlich zur normalen Frucht-Belohnung, wenn dabei das FELD KOMPLETT
+    # voll wird (TRAININGSPLAN.md 2.4) -- ohne das gibt das eigentliche Ziel
+    # (100% Fuellung) nur so viel wie jede andere Frucht.
+    reward_win: float = 100.0
+    # TRAININGSPLAN.md 2.4: die Naeher/Weiter-Formung (reward_closer/farther)
+    # hilft im FRUEHSPIEL enorm (siehe reward_closer/farther oben), belohnt
+    # aber den KUERZESTEN Weg zur Frucht -- im ENDSPIEL ist der kuerzeste Weg
+    # oft genau der Weg in die Selbst-Falle. Zwischen diesen beiden
+    # Pruefungs-Schwellen faehrt sie deshalb linear auf 0 herunter (Formel:
+    # MultiGameTrainer.formung_faktor). Fuer 17x15 kalibriert, wird fuer
+    # andere Brettgroessen proportional zur Feldflaeche skaliert.
+    formung_aus_ab: float = 50.0    # ab hier beginnt das Ausblenden
+    formung_null_ab: float = 80.0   # ab hier ist die Formung komplett weg
 
     # ------------------------------------------------------------------ #
     # Verhungern (Trainings-Timeout, KEINE Spielregel)
