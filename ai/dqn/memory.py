@@ -191,13 +191,31 @@ class ReplayBuffer:
         # Schlange, Einsperr-Gefahr) gehen beim zufaelligen Ziehen unter. Ab
         # `balance_min_length` gilt ein Zug als "fortgeschritten"; davon
         # erzwingt `balance_fraction` einen MINDESTANTEIL pro Lern-Batch
-        # (0 = deaktiviert = altes Verhalten). `_long_indices` haelt die
-        # Ringpuffer-Positionen, die GERADE eine solche Erfahrung enthalten,
-        # inkrementell aktuell (siehe push()) -- so muss beim Ziehen nicht
-        # jedes Mal der ganze Puffer durchsucht werden.
+        # (0 = deaktiviert = altes Verhalten).
+        #
+        # Die "langen" Ringpuffer-Positionen wurden fruaher in einem Python-
+        # Set gehalten und bei JEDEM sample()-Aufruf komplett per
+        # np.fromiter() in ein Array umgewandelt. Am Anfang eines Laufs ist
+        # dieses Set winzig (kaum lange Partien im Tagebuch) -- die
+        # Umwandlung faellt nicht auf. Je besser der Bot aber wird, desto
+        # groesser wird der Anteil langer Partien im Puffer, und diese O(n)-
+        # Umwandlung lief bei JEDEM Lernschritt erneut -> die Zuege/Sekunde
+        # sanken sichtbar und STETIG, ausgerechnet am staerksten genau dann,
+        # wenn Training am wichtigsten ist (gemessen: von ueber 9000 auf unter
+        # 3000 Zuege/s im Verlauf eines einzigen Laufs).
+        #
+        # Jetzt stattdessen ein array-gestuetzter dynamischer Satz mit O(1)
+        # Einfuegen/Entfernen (Swap-Remove-Trick, wie eine Menge ohne
+        # Neusortierung): `_long_array[:_long_count]` ist jederzeit eine
+        # direkte Sicht auf die aktuell gueltigen Eintraege, OHNE Kopie oder
+        # Neuaufbau -- sample() muss dafuer nichts mehr umwandeln.
+        # `_long_position` merkt sich zu jeder Ringpuffer-Position ihren Platz
+        # im Array, damit das Entfernen nicht erst suchen muss.
         self.balance_min_length = int(balance_min_length)
         self.balance_fraction = float(balance_fraction)
-        self._long_indices: set[int] = set()
+        self._long_array = np.empty(64, dtype=np.int64)
+        self._long_count = 0
+        self._long_position: dict[int, int] = {}
 
         self._index = 0
         self._size = 0
@@ -220,15 +238,43 @@ class ReplayBuffer:
         self.lengths[i] = snake_length
         now_long = snake_length >= self.balance_min_length
         if was_long and not now_long:
-            self._long_indices.discard(i)
+            self._long_discard(i)
         elif now_long and not was_long:
-            self._long_indices.add(i)
+            self._long_add(i)
         self._on_push(i)
         self._index = (i + 1) % self.capacity
         self._size = min(self._size + 1, self.capacity)
 
     def _on_push(self, i: int) -> None:
         """Haken fuer die priorisierte Variante (hier absichtlich leer)."""
+
+    # ---------------------------------------------------------------- #
+    # Array-gestuetzter dynamischer Satz "langer" Positionen -- siehe die
+    # Erklaerung bei self._long_array in __init__.
+    def _long_add(self, i: int) -> None:
+        if self._long_count == self._long_array.size:
+            # Voll -> verdoppeln (amortisiert O(1) pro Einfuegen, wie bei
+            # einer dynamischen Liste). Passiert nur alle paar tausend
+            # Einfuegungen, nicht bei jedem Zug.
+            self._long_array = np.concatenate(
+                [self._long_array, np.empty_like(self._long_array)])
+        pos = self._long_count
+        self._long_array[pos] = i
+        self._long_position[i] = pos
+        self._long_count += 1
+
+    def _long_discard(self, i: int) -> None:
+        pos = self._long_position.pop(i, None)
+        if pos is None:
+            return
+        last = self._long_count - 1
+        if pos != last:
+            # Letzten Eintrag an die freigewordene Stelle verschieben, statt
+            # das Array neu zu sortieren (Swap-Remove) -- O(1).
+            last_value = self._long_array[last]
+            self._long_array[pos] = last_value
+            self._long_position[last_value] = pos
+        self._long_count -= 1
 
     # ---------------------------------------------------------------- #
     def sample(self, batch_size: int):
@@ -247,11 +293,13 @@ class ReplayBuffer:
                     gibt es, damit der Agent beide Puffer-Arten gleich behandeln
                     kann.
         """
-        if self.balance_fraction > 0 and self._long_indices:
+        if self.balance_fraction > 0 and self._long_count > 0:
             n_long = min(int(round(batch_size * self.balance_fraction)),
                          batch_size)
-            long_pool = np.fromiter(self._long_indices, dtype=np.int64,
-                                     count=len(self._long_indices))
+            # Direkte Sicht auf die aktuell gueltigen Eintraege -- keine
+            # Kopie, kein Neuaufbau (siehe Erklaerung bei self._long_array
+            # in __init__).
+            long_pool = self._long_array[:self._long_count]
             long_idx = self.rng.choice(long_pool, size=n_long, replace=True)
             rest_idx = self.rng.integers(0, self._size, size=batch_size - n_long)
             idx = np.concatenate([long_idx, rest_idx])
