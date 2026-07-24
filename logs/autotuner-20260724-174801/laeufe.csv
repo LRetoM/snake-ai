@@ -1,0 +1,13 @@
+zeit,durchlauf,seed,score,zuege_pro_s,run_id,config
+17:58:03,1,11,65.65,10879.3,dqn-20260724-174802,"{""perception"": ""rich_grid7""}"
+18:08:05,1,11,64.3,10991.6,dqn-20260724-175804,"{""perception"": ""rich_grid7"", ""reward_step"": 0.0}"
+18:18:07,1,11,66.45,9260.7,dqn-20260724-180806,"{""perception"": ""rich_grid7"", ""prioritized"": true}"
+18:28:09,1,11,66.0,10843.1,dqn-20260724-181808,"{""perception"": ""rich_grid7"", ""reward_death"": -20.0}"
+18:38:10,1,11,67.3,12805.0,dqn-20260724-182810,"{""perception"": ""rich""}"
+18:48:12,1,11,66.55,11618.1,dqn-20260724-183811,"{""perception"": ""rich_grid5""}"
+18:58:14,1,11,67.75,9968.8,dqn-20260724-184813,"{""perception"": ""rich_grid9""}"
+19:08:17,1,11,65.2,6090.9,dqn-20260724-185815,"{""perception"": ""rich_grid9"", ""num_games"": 8}"
+19:18:19,1,11,65.2,12554.8,dqn-20260724-190817,"{""perception"": ""rich_grid9"", ""num_games"": 24}"
+19:28:21,1,11,65.35,14335.5,dqn-20260724-191820,"{""perception"": ""rich_grid9"", ""train_every"": 2}"
+19:38:23,1,11,65.15,9872.9,dqn-20260724-192822,"{""perception"": ""rich_grid9"", ""learning_rate"": 0.0005}"
+19:48:25,1,11,64.4,9939.7,dqn-20260724-193824,"{""perception"": ""rich_grid9"", ""learning_rate"": 0.002}"

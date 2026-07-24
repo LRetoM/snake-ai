@@ -141,30 +141,43 @@ zwei weitere Probleme auf):
   DQNConfig-Feld laesst sich fuer einen einzelnen Headless-Lauf setzen;
   unbekannte Feldnamen sind ein harter Fehler. Grundlage fuer den Tuner.
 - **NEU: `auto_tuner.py`** (Lucas Auftrag "vollautonome Config-Suche"):
-  laeuft unbeaufsichtigt (z.B. ueber Nacht/ganzen Tag), misst erst die
-  Basis (Standard + rich_grid7) mit festen Seeds und gleichem
-  Wanduhr-Budget je Lauf (Standard 12 Min, 2 Seeds), aendert dann je
-  Kandidat GENAU EINE Einstellung aus einem definierten Suchraum (21
-  Parameter: lr, gamma, n_step, batch, hidden, num_games, fruit_count,
-  eps-*, train_every, target_update, perception, curriculum_anteil,
-  pfad_fokus(+bonus), balance_anteil, spiegel_lernen, prioritized,
-  activation, reward_death/step), vergleicht gegen die Bestmarke
-  (Annahme nur bei >2% Verbesserung), verwirft sonst. Verworfene Werte
-  werden mit 20% Wahrscheinlichkeit bis zu 3x ERNEUT getestet (gegen
-  Pech-Laeufe). Alle 8 Kandidaten wird die Bestmarke frisch nachgemessen
-  (gegen Waerme-Drift des Macs). Bewusst SEQUENZIELL statt 5 parallel:
-  parallele Laeufe teilen sich CPU/Waermebudget → Wanduhr-Scores waeren
-  unvergleichbar, dazu Datei-Kollisionen. Protokoll je Tuner-Lauf in
-  `logs/autotuner-<zeit>/`: laeufe.csv (jeder einzelne Trainingslauf mit
-  Config+Score+Report-Verweis), protokoll.md (jede Entscheidung),
-  zustand.json (persistent, per `--fortsetzen` wiederaufnehmbar),
-  abschlussbericht.md (beste Config + Verlauf + "Gelerntes je Parameter"),
-  plus Modell-Sicherung vor dem Start. Stoppt bei Konvergenz (30
-  Verwerfungen in Folge), nach `--max-stunden` (Standard 24) oder per
-  Strg+C — Abschlussbericht kommt in allen Faellen. End-to-end getestet
-  inkl. Fortsetzen und Retest-Mechanik.
-  Start: `python auto_tuner.py` (Optionen: `--minuten`, `--seeds`,
-  `--max-stunden`, `--konvergenz`, `--marge`, `--fortsetzen`).
+  laeuft unbeaufsichtigt (Nacht/ganzer Tag). Sucht mit **Coordinate
+  Ascent in DURCHLAEUFEN** statt zufaellig: ein Durchlauf geht jeden
+  Parameter der Reihe nach durch, misst fuer den aktuellen Parameter ALLE
+  Werte des Suchraums und uebernimmt den besten (>2% Marge), bevor er zum
+  naechsten Parameter geht. Damit ist "erst alles einmal ausprobiert"
+  garantiert. **Konvergenz ist klar definiert**: sobald ein KOMPLETTER
+  Durchlauf keine einzige Verbesserung mehr bringt, gilt das Optimum als
+  bestaetigt und der Tuner **schaltet sich selbst ab** (kein 24h-Zwang;
+  `--max-stunden`, Standard 48, ist nur Sicherheits-Obergrenze).
+  **Retests eingebaut ohne Extra-Laeufe**: jeder Durchlauf misst ALLE
+  Werte erneut gegen die zu Durchlaufbeginn FRISCH nachgemessene Bestmarke
+  (Waerme-Drift-Anker) und mit einem ANDEREN Seed (rotiert aus SEED_POOL)
+  — ein Pech-/Glueck-Lauf wird so im naechsten Durchlauf zwangslaeufig
+  widerlegt; ein Wert, der ueber mehrere Durchlaeufe (= Seeds) vorne
+  bleibt, ist "zweifelsfrei" gut. Suchraum: 21 Parameter (lr, gamma,
+  n_step, batch, hidden, num_games, fruit_count, eps-*, train_every,
+  target_update, perception, curriculum_anteil, pfad_fokus(+bonus),
+  balance_anteil, spiegel_lernen, prioritized, activation, reward_death/
+  step) — jedes einzelne Feld zusaetzlich per `train_dqn.py --override
+  FELD=WERT` ansteuerbar. Bewusst SEQUENZIELL statt parallel (Wanduhr-
+  Scores waeren sonst unvergleichbar + Datei-Kollisionen).
+  Protokoll je Tuner-Lauf in `logs/autotuner-<zeit>/`: `laeufe.csv` (jeder
+  Trainingslauf mit Durchlauf/Seed/Score/Report-Verweis), `protokoll.md`
+  (jede Entscheidung), `zustand.json` (atomar geschrieben, per
+  `--fortsetzen` exakt wiederaufnehmbar), `abschlussbericht.md` (beste
+  Config als fertiger Startbefehl + Verlauf + "Gelerntes je Parameter"-
+  Ranking + Rand-Empfehlungen fuer den naechsten Suchraum) + maschinen-
+  lesbare `auswertung.json`, plus Modell-Sicherung vor dem Start.
+  **Sauberes Beenden getestet**: Strg+C → laufender Lauf schreibt dank
+  finally noch seinen Report, dann Tuner-Abschlussbericht; Konvergenz →
+  Selbstabschaltung + Bericht; `--max-stunden` → Bericht. Alle Faelle
+  verifiziert (inkl. Fortsetzen mitten im Parameter, gemockte Konvergenz
+  auf ein bekanntes Optimum, copy-paste-faehiger Startbefehl).
+  Start: `python auto_tuner.py` (Standard: 10 Min/Lauf, 1 Seed/Kandidat;
+  Optionen `--minuten --seeds --max-stunden --marge --fortsetzen`).
+  WICHTIG: waehrend der Tuner laeuft KEIN anderes Training parallel
+  starten (verfaelscht die Wanduhr-Messungen).
 
 **Naechster Schritt (Empfehlung)**: Zwei saubere A/B-Paare mit je 2 Seeds,
 gleiches Zeitbudget, identische Basis (rich_grid7, Standard-Defaults):

@@ -1,0 +1,115 @@
+{
+  "best_overrides": {
+    "perception": "rich_grid9"
+  },
+  "best_score": 67.75,
+  "historie": [
+    {
+      "nr": 1,
+      "durchlauf": 1,
+      "parameter": "reward_step",
+      "neuer_wert": 0.0,
+      "mittel": 64.3
+    },
+    {
+      "nr": 2,
+      "durchlauf": 1,
+      "parameter": "prioritized",
+      "neuer_wert": true,
+      "mittel": 66.45
+    },
+    {
+      "nr": 3,
+      "durchlauf": 1,
+      "parameter": "reward_death",
+      "neuer_wert": -20.0,
+      "mittel": 66.0
+    },
+    {
+      "nr": 4,
+      "durchlauf": 1,
+      "parameter": "perception",
+      "neuer_wert": "rich",
+      "mittel": 67.3
+    },
+    {
+      "nr": 5,
+      "durchlauf": 1,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid5",
+      "mittel": 66.55
+    },
+    {
+      "nr": 6,
+      "durchlauf": 1,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid9",
+      "mittel": 67.75
+    },
+    {
+      "nr": 7,
+      "durchlauf": 1,
+      "parameter": "num_games",
+      "neuer_wert": 8,
+      "mittel": 65.2
+    },
+    {
+      "nr": 8,
+      "durchlauf": 1,
+      "parameter": "num_games",
+      "neuer_wert": 24,
+      "mittel": 65.2
+    },
+    {
+      "nr": 9,
+      "durchlauf": 1,
+      "parameter": "train_every",
+      "neuer_wert": 2,
+      "mittel": 65.35
+    },
+    {
+      "nr": 10,
+      "durchlauf": 1,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.0005,
+      "mittel": 65.15
+    },
+    {
+      "nr": 11,
+      "durchlauf": 1,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.002,
+      "mittel": 64.4
+    }
+  ],
+  "verlauf": [
+    "Basis (Durchlauf 1, Seed [11]): 65.65",
+    "D1: perception='rich_grid9' ANGENOMMEN (65.65 -> 67.75)"
+  ],
+  "durchlauf": 1,
+  "pass_queue": [
+    "pfad_fokus_bonus",
+    "gamma",
+    "spiegel_lernen",
+    "fruit_count",
+    "target_update",
+    "pfad_fokus",
+    "eps_decay_steps",
+    "curriculum_anteil",
+    "balance_anteil",
+    "batch_size",
+    "eps_end",
+    "n_step",
+    "activation",
+    "hidden"
+  ],
+  "pass_verbessert": true,
+  "kandidaten_gesamt": 11,
+  "verbesserungen": 1,
+  "laeufe_gesamt": 12,
+  "seeds": 1,
+  "minuten": 10.0,
+  "_pass_seeds": [
+    11
+  ]
+}
