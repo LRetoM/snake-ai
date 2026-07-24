@@ -34,6 +34,37 @@ Dieses Dokument hat drei Teile:
   Abschluss-Prüfung in `train_dqn.py`) nie nach — lief still mit weniger
   Partien als eingestellt. Jetzt behoben, `eval_episodes` 10→20.
 
+### Runde 3 (Messung, 2026-07-24 — Report `dqn-20260724-124234`)
+33.6 Min, 60.575 Episoden, Brett 17×15. **Achtung, kein sauberer Vergleich
+zur Runde-1-Basis**: dieser Lauf wich vom empfohlenen Standard ab
+(`perception=rich_grid9` statt `rich_grid7`, `fruit_count=10` statt 3,
+`eps_decay_steps=150000` statt 80000 — alles Lucas manuelle Overrides,
+nicht neue Defaults).
+- **Neuer Champion: Prüfung 87.25** (≈ (87.25+3)/255 ≈ 35% Feldfüllung —
+  Fortschritt gegenüber der 19.2%-Basis, deckt sich mit Lucas eigener
+  ~33%-Schätzung).
+- **Kernbefund, der Phase 2.2 direkt stützt**: Selbstkollision steigt
+  MONOTON mit der Schlangenlänge — 58.3% (Länge 0-9) → 63.0% → 53.2% →
+  51.1% → 58.2% → 64.9% → 70.6% → 73.3% → 77.8% → **81.0% (Länge 90+)**.
+  Wand-Tod sinkt spiegelbildlich (41.7% → 19.0%). Die Basis-Messung aus
+  Runde 1 hatte nur eine einzige Gesamtzahl (52%); jetzt zeigt sich die
+  Zunahme mit der Länge explizit, genau das erwartete "Einsperr"-Muster,
+  je länger desto häufiger.
+- Q-Kalibrierung sauber (Q 38.12 vs. tatsächlich 38.15 — kein
+  Selbstüberschätzungs-Problem).
+- Auto-Diagnose meldet **Plateau** (letzte 5 Prüfungen alle < 95% von
+  87.25) — deckt sich mit Lucas eigener Live-Beobachtung "schon wieder
+  auf einem Plateau angelangt".
+- Auto-Diagnose meldet **steigenden Loss** im letzten Drittel (2.60 →
+  4.61). Grund vermutlich: `lr_meilensteine` ((90, 3e-4), (130, 1e-4))
+  hat bei eval_best 87.25 noch nicht gegriffen (Schwelle 90 knapp
+  verfehlt) — nächster Lauf sollte das von selbst lösen, sobald die
+  Prüfung die 90 überschreitet; falls nicht, Lernrate ist ein Kandidat.
+- **Konsequenz**: Phase 2.2 (Endspiel-Curriculum) wird jetzt umgesetzt
+  (Lucas OK am 2026-07-24) — der Report liefert die Begründung direkt:
+  das Problem sitzt eindeutig im langen Spiel, nicht in Wand-Kollisionen
+  oder Grundlagen.
+
 ### Runde 2 (Phase 2 + Report-System, auf Lucas Wunsch: "smart aber
 zurechenbar" — deterministische Meilenstein-Zeitpläne statt reaktivem
 Auto-Tuner)
@@ -95,9 +126,35 @@ gleichzeitig + Brett-Transfer 9×9→13×11, Neuroevolution-Regressionstest
 (bleibt tanh, Genom-Roundtrip unverändert), `watch_ai.py` findet/lädt den
 richtigen Champion. Alle `.py`-Dateien im Projekt kompilieren fehlerfrei.
 
+### Runde 4 (Phase 2.2 Endspiel-Curriculum, 2026-07-24 — Lucas OK nach Runde-3-Report)
+Umgesetzt genau nach Spec:
+- `game/snake_game.py`: neue Methode `load_snapshot(snake, fruits, direction,
+  steps_since_fruit)` — strukturell wie `reset()` (der Motor legt den
+  Startpunkt fest), keine neue Spielregel/Strategie, KI bekommt keine
+  Zusatzinfo.
+- `ai/dqn/config.py`: `curriculum_anteil: float = 0.25`.
+- `ai/dqn/trainer.py`: `curriculum_path()` (eigene Datei je Brett, wie
+  `champion_path()`), `_load_/_save_curriculum_snapshots()`,
+  `_reset_or_curriculum()` (ersetzt `game.reset()` in `_finish_episode` UND
+  bei der Initialbelegung in `__init__`). `run_evaluation()` sammelt
+  waehrend jeder Pruefung pro Partie Stellungen bei Laenge 40/50/60 und
+  behaelt davon nur die der BESTEN Pruefpartie (Ring, `[-200:]`,
+  `models/startstellungen_{cols}x{rows}.pkl`). Pruefungen selbst bleiben
+  unveraendert bei `g.reset()` (immer Laenge 3 — reiner Massstab).
+- **Smoke-Tests (im Chat ausgeführt)**: `curriculum_anteil=1.0` laedt
+  zuverlaessig eine injizierte Stellung (Laenge/Score korrekt); Pruefpartien
+  bleiben dabei unberuehrt bei Laenge 3; mit klein gesetzten Test-Schwellen
+  (4/5/6 statt 40/50/60) sammelt eine echte `run_evaluation()` tatsaechlich
+  Stellungen ein, schreibt die `.pkl`-Datei, ein neuer Trainer laedt sie
+  wieder — Persistenz ueber Neustarts hinweg funktioniert; Ring-Deckel bei
+  200 greift. Alle geänderten Dateien kompilieren fehlerfrei.
+- Effekt (noch nicht gemessen, da neu): ein Viertel der Trainingspartien
+  sollte ab der ersten Pruefung mit gesammelten Stellungen direkt im
+  Endspiel starten, statt die seltene "lang + wenig Platz"-Situation nur
+  zufällig zu treffen — sollte laut Plan direkt gegen den in Runde 3
+  gemessenen Selbstkollisions-Anstieg (58%→81% mit der Länge) wirken.
+
 **Bewusst NICHT umgesetzt** (auf der Sperrliste C-9 oder Zeitgründe):
-- **Phase 2.2** Endspiel-Curriculum (Meister-Stellungen) — wartet laut Plan
-  explizit auf Lucas OK, nicht angefasst.
 - **Auto-Tuner** (reaktiv auf Stillstand) — von Luca explizit abgelehnt.
 - **Phase 0.2** Einsperr-Analyse (Flood-Fill NUR als Post-Mortem-Telemetrie).
 - **Phase 0.4/0.5** Meilenstein-Bibliothek (Checkpoints pro Füllgrad), A/B-Runner-Skript.
@@ -107,13 +164,15 @@ richtigen Champion. Alle `.py`-Dateien im Projekt kompilieren fehlerfrei.
 - **Phase 3**: alle Performance-Optimierungen (Board-Zeichnen-Drossel etc.).
 - **Phase 4**: CNN (separat geplant, erst nach Messung von 0-2).
 
-**Nächster empfohlener Schritt:** den 8h-Lauf jetzt fahren (alle
-Kernmechanismen gegen das Plateau sind aktiv) und danach den Report lesen —
-der zeigt bereits in einem 12.000-Tick-Testlauf exakt das erwartete Muster
-(Selbstkollision steigt von 23% bei Länge 0-9 auf 100% bei Länge 50+).
-Passt das Muster zum erwarteten Verlauf, ist Phase 3 (Performance) oder
-Phase 4 (CNN) der nächste sinnvolle Schritt; zeigt der Report etwas
-Unerwartetes, entscheiden wir datenbasiert von dort aus weiter.
+**Nächster empfohlener Schritt:** frischen (oder `--weiter`-)Lauf auf 17×15
+mit den Runde-2-Standardwerten starten (`rich_grid7`, `fruit_count=3`,
+`eps_decay_steps=80000` — Runde 3 war ein Abweichler und daher kein sauberer
+Vergleich) und laufen lassen, bis die Prüfung sich wieder setzt. Danach
+Report lesen und gezielt vergleichen: sinkt die Selbstkollisionsrate in den
+hohen Längen-Eimern (60+) gegenüber Runde 3? Falls ja, wirkt das Curriculum
+wie erhofft — weiter laufen lassen. Falls kein Unterschied sichtbar wird,
+ist Phase 4 (CNN) der nächste Kandidat, da dann eher die Wahrnehmung selbst
+(nicht die Trainingsverteilung) die Grenze ist.
 
 ---
 

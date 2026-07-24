@@ -181,6 +181,35 @@ class SnakeGame:
         self.fruits = set()
         self._refill_fruits()
 
+    def load_snapshot(self, snake: list[Cell], fruits: set[Cell],
+                       direction: Direction, steps_since_fruit: int) -> None:
+        """Setzt den Zustand auf eine MITGEGEBENE Stellung statt der Standard-
+        Startposition (Laenge 3, Mitte) -- fuers Endspiel-Curriculum
+        (TRAININGSPLAN.md 2.2): ein Teil der Trainingspartien beginnt direkt in
+        einer schon einmal erreichten, langen Stellung statt jedes Mal von
+        vorne, wie ein Schachspieler, der gezielt Endspiele uebt.
+
+        Leitplanke: das ist strukturell dasselbe wie reset() (der Motor
+        entscheidet, wo eine Partie beginnt) -- keine neue Spielregel, keine
+        Strategie. Die KI bekommt dadurch keinerlei Zusatzinfo, sie sieht nur
+        eine andere Stellung als Ausgangspunkt und spielt danach genauso frei
+        weiter wie sonst auch.
+        """
+        self.snake = list(snake)
+        self._occupied = set(self.snake)
+        self.direction = direction
+        self._turn_queue.clear()
+
+        self.score = len(self.snake) - 3   # Laenge = 3 + Score gilt immer (siehe step())
+        self.steps = 0
+        self.steps_since_fruit = steps_since_fruit
+        self.alive = True
+        self.won = False
+        self.death_cause = None
+
+        self.fruits = set(fruits)
+        self._refill_fruits()   # ergaenzt nur, falls zu wenige (z.B. anderer fruit_count)
+
     # ------------------------------------------------------------------ #
     # Eingabe: Wunschrichtung setzen
     # ------------------------------------------------------------------ #

@@ -138,6 +138,22 @@ class DQNConfig:
     balance_anteil: float = 0.3     # Mindestanteil solcher Zuege pro Lern-Batch
 
     # ------------------------------------------------------------------ #
+    # Endspiel-Curriculum (TRAININGSPLAN.md 2.2)
+    # ------------------------------------------------------------------ #
+    # Laengen-balanciertes Lernen oben hilft nur mit dem, was ohnehin passiert
+    # ist -- lange Stellungen bleiben selten, weil jede Partie bei Laenge 3
+    # beginnt. Das Curriculum geht einen Schritt weiter: ein Teil der
+    # TRAININGS-Partien startet direkt in einer schon einmal erreichten langen
+    # Stellung (bei jeder Pruefung von der besten Pruefpartie bei Laenge
+    # 40/50/60 gesichert, siehe MultiGameTrainer.run_evaluation) -- wie ein
+    # Schachspieler, der gezielt Endspielstellungen uebt statt jedes Mal bei
+    # Zug 1 anzufangen. Die KI bekommt dabei KEINE Zusatzinfo und KEINE andere
+    # Belohnung/Wahrnehmung -- nur der STARTPUNKT der Partie aendert sich.
+    # Pruefungen (run_evaluation) starten IMMER bei Laenge 3, damit der
+    # Massstab rein bleibt. 0.0 = komplett abgeschaltet (altes Verhalten).
+    curriculum_anteil: float = 0.25
+
+    # ------------------------------------------------------------------ #
     # Symmetrie-Verdopplung (TRAININGSPLAN.md 2.6)
     # ------------------------------------------------------------------ #
     # Snake ist links-rechts spiegelsymmetrisch: eine Erfahrung "rechts war

@@ -97,6 +97,19 @@ def resolve_champion_path(cols: int, rows: int) -> str | None:
     return None
 
 
+def curriculum_path(cols: int, rows: int) -> str:
+    """Datei mit gespeicherten Endspiel-Stellungen DIESES Bretts
+    (TRAININGSPLAN.md 2.2) -- eigene Datei pro Brettgroesse aus demselben
+    Grund wie bei champion_path(): eine Laenge-40-Stellung auf 9x9 ist etwas
+    anderes als auf 17x15."""
+    return os.path.join(MODEL_DIR, f"startstellungen_{cols}x{rows}.pkl")
+
+
+# Laengen, bei denen run_evaluation() von der besten Pruefpartie eine
+# Stellung fuers Endspiel-Curriculum sichert (TRAININGSPLAN.md 2.2).
+_CURRICULUM_LENGTHS = (40, 50, 60)
+
+
 def load_champion_config(path: str) -> DQNConfig | None:
     """Laedt die EXAKTEN Einstellungen, mit denen der unter `path` gespeicherte
     Champion trainiert wurde (siehe "full_config" in `_save_champion`).
@@ -179,6 +192,12 @@ class MultiGameTrainer:
         # (siehe champion_path() oben im Modul).
         self.champion_file = champion_path(cfg.grid_cols, cfg.grid_rows)
 
+        # Endspiel-Curriculum (TRAININGSPLAN.md 2.2): gespeicherte Stellungen
+        # dieses Bretts aus einem FRUEHEREN Lauf, falls vorhanden -- sonst
+        # leer, bis die erste Pruefung (run_evaluation) etwas beitraegt.
+        self.curriculum_file = curriculum_path(cfg.grid_cols, cfg.grid_rows)
+        self.curriculum_snapshots: list[dict] = self._load_curriculum_snapshots()
+
         # Ein Basis-Seed sorgt dafuer, dass jedes Spiel seinen EIGENEN Zufall
         # bekommt (sonst spawnen alle Fruechte identisch -> die Spiele waeren
         # Klone und wuerden das Tagebuch mit lauter gleichen Erfahrungen fuellen).
@@ -186,6 +205,11 @@ class MultiGameTrainer:
             seed = cfg.seed
         base_seed = seed if seed is not None else random.randrange(1 << 30)
         self.base_seed = base_seed
+        # Eigener Zufall NUR fuer die Curriculum-Auswahl (TRAININGSPLAN.md
+        # 2.2) -- getrennt vom Spiel-Zufall der einzelnen Spiele, damit ein
+        # anderer curriculum_anteil nicht nebenbei auch die Fruchtspawns
+        # verschiebt.
+        self._curriculum_rng = random.Random(base_seed + 555)
 
         self.agent = DQNAgent(cfg, self.input_size, seed=base_seed)
         self.buffer = make_buffer(cfg, self.input_size,
@@ -201,6 +225,12 @@ class MultiGameTrainer:
             SnakeGame(self.game_cfg, rng=random.Random(base_seed + i))
             for i in range(cfg.num_games)
         ]
+        # Auch die allererste Belegung darf schon aus dem Curriculum kommen
+        # (TRAININGSPLAN.md 2.2, "Initialbelegung") -- sonst waeren die ersten
+        # num_games Partien nach jedem Neustart systematisch kurz.
+        for _game in self.games:
+            self._reset_or_curriculum(_game)
+        del _game
         # Eine n-Schritt-Kette pro Spiel: sie sammelt die letzten Zuege dieses
         # Spiels, bis eine vollstaendige Kette fertig ist (siehe memory.py).
         self.chains = [NStepChain(cfg.n_step, cfg.gamma) for _ in self.games]
@@ -368,6 +398,44 @@ class MultiGameTrainer:
         self.resumed_from = path
         self._resume_meta = checkpoint
 
+    # ------------------------------------------------------------------ #
+    # Endspiel-Curriculum (TRAININGSPLAN.md 2.2)
+    # ------------------------------------------------------------------ #
+    def _load_curriculum_snapshots(self) -> list[dict]:
+        """Gespeicherte Endspiel-Stellungen dieses Bretts von der Platte, oder
+        eine leere Liste, wenn es noch keine gibt bzw. die Datei beschaedigt
+        ist (dann einfach ohne Curriculum weitermachen statt abzustuerzen)."""
+        if not os.path.exists(self.curriculum_file):
+            return []
+        import pickle
+        try:
+            with open(self.curriculum_file, "rb") as fh:
+                return pickle.load(fh)
+        except Exception:
+            return []
+
+    def _save_curriculum_snapshots(self) -> None:
+        """Schreibt die aktuelle (auf 200 gedeckelte) Sammlung auf die Platte."""
+        import pickle
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        with open(self.curriculum_file, "wb") as fh:
+            pickle.dump(self.curriculum_snapshots, fh)
+
+    def _reset_or_curriculum(self, game: SnakeGame) -> None:
+        """Setzt ein TRAININGS-Spiel zurueck -- mit `curriculum_anteil`
+        Wahrscheinlichkeit aus einer gespeicherten Endspiel-Stellung statt
+        immer bei Laenge 3 (TRAININGSPLAN.md 2.2). Gilt bewusst NUR fuer
+        Trainingspartien (Aufrufer: __init__ und _finish_episode) -- Pruefungen
+        (run_evaluation) bleiben immer bei Laenge 3, damit der Massstab rein
+        bleibt. Die KI bekommt dabei keinerlei Zusatzinfo, nur der Startpunkt
+        der Partie aendert sich."""
+        game.reset()
+        if self.cfg.curriculum_anteil > 0 and self.curriculum_snapshots:
+            if self._curriculum_rng.random() < self.cfg.curriculum_anteil:
+                snap = self._curriculum_rng.choice(self.curriculum_snapshots)
+                game.load_snapshot(snap["snake"], snap["fruits"],
+                                   snap["direction"], snap["steps_since_fruit"])
+
     # ================================================================== #
     # Ein Trainings-Tick: alle Spiele machen EINEN Zug, dann wird gelernt
     # ================================================================== #
@@ -498,8 +566,9 @@ class MultiGameTrainer:
 
         self._log_row()
 
-        # Frisches Spiel fuer diesen Slot.
-        game.reset()
+        # Frisches Spiel fuer diesen Slot -- ggf. aus dem Endspiel-Curriculum
+        # statt immer bei Laenge 3 (TRAININGSPLAN.md 2.2, siehe _reset_or_curriculum).
+        self._reset_or_curriculum(game)
         self.chains[i].clear()
         self.states[i] = self.perceive(game)
         self.dists[i] = fruit_distance(game)
@@ -559,6 +628,13 @@ class MultiGameTrainer:
         # Punkt + 20 Punkte Puffer) und wird nie kleiner als der Config-Wert.
         max_steps = max(cfg.eval_max_steps, int(50 * (self.eval_best + 20)))
 
+        # Endspiel-Curriculum (TRAININGSPLAN.md 2.2): waehrend der Pruefung
+        # merken wir uns pro Partie die Stellung, sobald sie zum ERSTEN Mal
+        # Laenge 40/50/60 erreicht -- nachher wird nur die Sammlung der
+        # BESTEN Pruefpartie behalten (siehe unten), der Rest verworfen.
+        curriculum_hits: list[dict[int, dict]] = [{} for _ in games]
+        next_target = [0] * len(games)
+
         while any(alive) and steps < max_steps:
             steps += 1
             idx_alive = [i for i, a in enumerate(alive) if a]
@@ -566,6 +642,18 @@ class MultiGameTrainer:
             for slot, i in enumerate(idx_alive):
                 game = games[i]
                 result = game.step_action(Action(int(actions[slot])))
+
+                while (next_target[i] < len(_CURRICULUM_LENGTHS)
+                       and game.length >= _CURRICULUM_LENGTHS[next_target[i]]):
+                    threshold = _CURRICULUM_LENGTHS[next_target[i]]
+                    curriculum_hits[i][threshold] = {
+                        "snake": list(game.snake),
+                        "fruits": set(game.fruits),
+                        "direction": game.direction,
+                        "steps_since_fruit": game.steps_since_fruit,
+                    }
+                    next_target[i] += 1
+
                 over = (not result.alive) or result.won
                 if not over and game.steps_since_fruit >= cfg.starve_limit(game.length):
                     over = True
@@ -579,6 +667,14 @@ class MultiGameTrainer:
         for i, a in enumerate(alive):
             if a:
                 scores[i] = games[i].score
+
+        # Nur von der BESTEN Pruefpartie dieser Pruefung Stellungen behalten
+        # (nicht von jeder -- sonst wuerde auch Glueck/Mittelmass einsickern).
+        best_i = max(range(len(games)), key=lambda i: scores[i])
+        if curriculum_hits[best_i]:
+            self.curriculum_snapshots.extend(curriculum_hits[best_i].values())
+            self.curriculum_snapshots = self.curriculum_snapshots[-200:]
+            self._save_curriculum_snapshots()
 
         self.q_calibration_log.extend(zip(q_start.tolist(), scores))
         if len(self.q_calibration_log) > 20_000:
