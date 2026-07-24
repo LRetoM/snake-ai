@@ -73,7 +73,8 @@ def fruit_distance(game: SnakeGame) -> int:
 
 def compute_reward(cfg, ate_fruit: bool, died: bool,
                    dist_before: int, dist_after: int,
-                   won: bool = False, formung_faktor: float = 1.0) -> float:
+                   won: bool = False, formung_faktor: float = 1.0,
+                   pfad_fokus_aktuell: float = 0.0) -> float:
     """Belohnung fuer EINEN Zug.
 
     Argumente:
@@ -95,6 +96,23 @@ def compute_reward(cfg, ate_fruit: bool, died: bool,
                       MultiGameTrainer.formung_faktor): die Formung belohnt
                       den KUERZESTEN Weg zur Frucht -- im Fruehspiel richtig,
                       im Endspiel oft genau der Weg in die Selbst-Falle.
+      pfad_fokus_aktuell -- der Pfad-Fokus-Regler (DQNConfig.pfad_fokus),
+                      bereits mit dem Ausblend-Faktor multipliziert (kommt
+                      vom Trainer, siehe MultiGameTrainer.pfad_fokus_aktuell
+                      -- gleiche Mechanik wie formung_faktor). 0.0 = reines
+                      Sammeln (Standard), 1.0 = reines Ueberleben. Mischt
+                      LINEAR zwischen den beiden Zielen ("erst sicher, dann
+                      schnell", Lucas Idee):
+                      1) Frucht-Belohnung wird auf (1 - Wert) skaliert --
+                         bei 1.0 bringt Frucht NULL Belohnung (ob gefressen
+                         oder nicht, ist egal),
+                      2) jeder ueberlebte Zug bekommt zusaetzlich einen
+                         Bonus (Wert * cfg.pfad_fokus_bonus).
+                      Verhungern zwingt trotzdem zum Fressen (starve_limit
+                      im Trainer) -- Frucht wird so zum MITTEL fuers
+                      Ueberleben statt zum Selbstzweck. Faellt der Regler
+                      (Lauf-Niveau steigt), kehrt automatisch die volle
+                      Frucht-Belohnung zurueck.
 
     Reihenfolge der Faelle ist Absicht:
 
@@ -110,18 +128,31 @@ def compute_reward(cfg, ate_fruit: bool, died: bool,
     if died:
         return cfg.reward_death
 
-    reward = cfg.reward_step  # winzige Zeitstrafe, gilt fuer jeden Zug
+    # Zeitstrafe + (optionaler, abklingender) Pfad-Fokus-Bonus -- beides
+    # gilt fuer jeden nicht-toedlichen Zug.
+    reward = cfg.reward_step + pfad_fokus_aktuell * getattr(cfg, "pfad_fokus_bonus", 0.0)
 
     if ate_fruit:
-        reward += cfg.reward_fruit
+        # Frucht linear runterskaliert: pfad_fokus_aktuell=0 -> 100% Frucht,
+        # =1 -> 0% Frucht (dann ist es der Belohnung komplett egal, ob
+        # gefressen wurde -- reiner Ueberlebens-Fokus).
+        reward += cfg.reward_fruit * (1.0 - pfad_fokus_aktuell)
         if won:
             reward += cfg.reward_win
         return reward
 
+    # Die Naeher/Weiter-Formung wird vom Pfad-Fokus MIT runterskaliert --
+    # das ist entscheidend, nicht nur Kosmetik: bei vollem Pfad-Fokus waere
+    # sonst die Frucht zwar 0 wert, aber der WEGWEISER dorthin (+0.1/-0.12
+    # je Zug) weiterhin staerker als der Ueberlebens-Bonus (0.05) -- die
+    # Schlange jagte dann weiter der Frucht hinterher, nur eben wegen des
+    # Wegweisers statt der Frucht selbst (genau so am 2026-07-24 im Fenster
+    # beobachtet: "selbst bei 100% wird noch Fruechte gesammelt").
+    formung = formung_faktor * (1.0 - pfad_fokus_aktuell)
     if dist_after < dist_before:
-        reward += formung_faktor * cfg.reward_closer
+        reward += formung * cfg.reward_closer
     elif dist_after > dist_before:
-        reward += formung_faktor * cfg.reward_farther
+        reward += formung * cfg.reward_farther
     # gleich geblieben (kann bei gleichem Abstand um die Ecke passieren):
     # nur die Zeitstrafe, kein Bonus, keine Extra-Strafe.
 

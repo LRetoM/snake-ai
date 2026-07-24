@@ -103,6 +103,27 @@ GAMMA_PRESETS = [
 ]
 NSTEP_PRESETS = [("1 Zug", 1), ("3 Züge", 3), ("5 Züge", 5)]
 FRUIT_OPTIONS = list(range(1, 11))
+# TRAININGSPLAN.md 2.2: Anteil der Trainingspartien, die aus einer
+# gespeicherten Endspiel-Stellung starten statt bei Laenge 3.
+CURRICULUM_PRESETS = [
+    ("Aus", 0.0),
+    ("Gering (10%)", 0.10),
+    ("Normal (25%)", 0.25),
+    ("Hoch (40%)", 0.40),
+    ("Sehr hoch (60%)", 0.60),
+    ("Extrem (80%)", 0.80),
+    ("Voll (100%)", 1.0),
+]
+# Pfad-Fokus-Regler (Lucas Idee, 2026-07-24): 0 = reines Fruchtsammeln,
+# 1 = reines Ueberleben (Frucht bringt dann keine Belohnung mehr). Blendet
+# automatisch aus, sobald das Lauf-Niveau steigt -- siehe ai/dqn/config.py.
+PFADFOKUS_PRESETS = [
+    ("Aus (0%)", 0.0),
+    ("Leicht (25%)", 0.25),
+    ("Mittel (50%)", 0.50),
+    ("Stark (70%)", 0.70),
+    ("Voll (100%)", 1.0),
+]
 
 # Wie viele Trainings-Ticks pro gezeichnetem Bild gerechnet werden. Werte unter
 # 1 heissen "seltener als jedes Bild einen Tick" (siehe _tick_accumulator in
@@ -216,6 +237,10 @@ class DQNDashboard:
         self.nstep_idx = _preset_index(NSTEP_PRESETS, cfg.n_step, 1)
         self.fruit_idx = cfg.fruit_count - 1
         self.per_on = cfg.prioritized
+        self.curriculum_idx = _preset_index(
+            CURRICULUM_PRESETS, getattr(cfg, "curriculum_anteil", 0.0), 2)
+        self.pfadfokus_idx = _preset_index(
+            PFADFOKUS_PRESETS, getattr(cfg, "pfad_fokus", 0.0), 0)
 
     def _menu_entries(self) -> list[tuple[str, str | None, str]]:
         entries: list[tuple[str, str | None, str]] = []
@@ -251,6 +276,9 @@ class DQNDashboard:
             ("Erfahrungs-Ketten (n-Schritt)", NSTEP_PRESETS[self.nstep_idx][0], "nstep"),
             ("Tagebuch priorisieren", "An" if self.per_on else "Aus", "per"),
             ("Früchte", str(FRUIT_OPTIONS[self.fruit_idx]), "fruit"),
+            ("Endspiel-Curriculum", CURRICULUM_PRESETS[self.curriculum_idx][0], "curriculum"),
+            ("Pfad-Fokus (erst sicher, dann schnell)",
+             PFADFOKUS_PRESETS[self.pfadfokus_idx][0], "pfadfokus"),
             ("Gespeicherten Champion weitertrainieren", champ, "cont"),
             ("NEUES TRAINING STARTEN", None, "start"),
         ]
@@ -300,6 +328,10 @@ class DQNDashboard:
             self.per_on = not self.per_on
         elif kind == "fruit":
             self.fruit_idx = (self.fruit_idx + delta) % len(FRUIT_OPTIONS)
+        elif kind == "curriculum":
+            self.curriculum_idx = (self.curriculum_idx + delta) % len(CURRICULUM_PRESETS)
+        elif kind == "pfadfokus":
+            self.pfadfokus_idx = (self.pfadfokus_idx + delta) % len(PFADFOKUS_PRESETS)
         elif kind == "cont":
             board_cols, board_rows = BOARD_PRESETS[self.board_idx][1]
             path = resolve_champion_path(board_cols, board_rows)
@@ -362,6 +394,8 @@ class DQNDashboard:
         cfg.n_step = NSTEP_PRESETS[self.nstep_idx][1]
         cfg.prioritized = self.per_on
         cfg.fruit_count = FRUIT_OPTIONS[self.fruit_idx]
+        cfg.curriculum_anteil = CURRICULUM_PRESETS[self.curriculum_idx][1]
+        cfg.pfad_fokus = PFADFOKUS_PRESETS[self.pfadfokus_idx][1]
 
         # self._resume_champion_path wurde beim Umschalten von "Champion
         # weitertrainieren" (oder beim Fenster-Start mit --weiter) fest

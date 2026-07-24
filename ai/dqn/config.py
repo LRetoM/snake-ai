@@ -234,6 +234,47 @@ class DQNConfig:
     formung_null_ab: float = 80.0   # ab hier ist die Formung komplett weg
 
     # ------------------------------------------------------------------ #
+    # Pfad-Fokus-Regler ("erst sicher, dann schnell" -- Lucas Idee 2026-07-24)
+    # ------------------------------------------------------------------ #
+    # EIN Regler, der die Belohnungs-Oekonomie zwischen zwei Zielen mischt:
+    #
+    #   pfad_fokus = 0.0  ->  reines Fruchtsammeln (Code-Standard, heutiges
+    #                         Verhalten unveraendert)
+    #   pfad_fokus = 1.0  ->  reines Ueberleben: Frucht bringt NULL Belohnung
+    #                         (ob gefressen oder nicht ist der Belohnung
+    #                         egal), stattdessen zaehlt jeder ueberlebte Zug
+    #   0 < pfad_fokus < 1 -> linear gemischt dazwischen
+    #
+    # Warum ueberhaupt? Reiner Fruchtsammel-Fokus belohnt den KUERZESTEN Weg
+    # zur naechsten Frucht -- im Endspiel oft genau der Weg in die Selbst-
+    # Falle. Mit hohem pfad_fokus lohnt sich stattdessen, vorsichtige,
+    # raumschonende Pfade zu erkunden, auch wenn das laenger dauert oder mal
+    # eine Frucht "ausgelassen" wird. Trotzdem KEIN ewiges Nichtstun: die
+    # Verhungern-Regel (starve_limit) zwingt weiterhin zum Fressen -- Frucht
+    # wird so zum MITTEL fuers Ueberleben statt zum Selbstzweck, genau wie
+    # gewuenscht.
+    #
+    # Rechnung (siehe reward.py fuer die genaue Umsetzung):
+    #   Frucht-Belohnung   = reward_fruit * (1 - pfad_fokus_aktuell)
+    #   Ueberlebens-Bonus  = pfad_fokus_bonus * pfad_fokus_aktuell   (pro Zug)
+    #
+    # `pfad_fokus_aktuell` ist NICHT einfach `pfad_fokus`: sobald das
+    # Lauf-Niveau (eval_best_run) steigt -- der Bot also einen sicheren Weg
+    # gefunden hat -- blendet der Regler automatisch Richtung 0 aus (gleiche
+    # Ausblend-Mechanik wie die Naeher/Weiter-Formung, siehe
+    # MultiGameTrainer.pfad_fokus_aktuell). Dann uebernimmt wieder das
+    # Fruchtsammeln: derselbe sichere Pfad, aber mit der Zeit schneller
+    # gefahren. Deterministisch an ein erreichtes Niveau gekoppelt, KEIN
+    # reaktiver Auto-Tuner (Lucas Vorgabe von Runde 2).
+    #
+    # 0.0 = AUS (Code-Standard, bis eine A/B-Messung etwas anderes belegt --
+    # einstellen per CLI: --pfadfokus 0.7 fuer 70% Pfad-Fokus).
+    pfad_fokus: float = 0.0          # DER Regler: 0.0 = Sammeln .. 1.0 = Ueberleben
+    pfad_fokus_bonus: float = 0.05   # Bonus je ueberlebtem Zug BEI VOLLEM Fokus
+    pfad_fokus_aus_ab: float = 80.0  # ab diesem Lauf-Niveau beginnt das Ausblenden
+    pfad_fokus_null_ab: float = 120.0  # ab hier ist der Regler komplett auf 0
+
+    # ------------------------------------------------------------------ #
     # Verhungern (Trainings-Timeout, KEINE Spielregel)
     # ------------------------------------------------------------------ #
     # Laeuft die Schlange zu lange ohne Frucht, brechen wir die Partie ab (mit

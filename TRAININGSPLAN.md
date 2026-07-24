@@ -15,6 +15,165 @@ Dieses Dokument hat drei Teile:
 
 ## UMSETZUNGSSTAND (2026-07-23, von Sonnet 5 — 2. Runde)
 
+### Runde 5 (2026-07-24, Mess-Fundament-Generalueberholung — nach Lucas
+"wir muessen uns auf alle Werte verlassen koennen")
+
+**Ausloeser**: Der 45-Min-Lauf `dqn-20260724-152712` (rich_grid7, frisch,
+Curriculum an, nach Memory-Fix stabil 11.177 Zuege/s ueber den GANZEN Lauf)
+zeigte drei Reporting-Fehler, die Messungen unbrauchbar machten:
+1. Die Champion-Schutzschwelle (87.25, vom rich_grid9-Lauf!) speiste auch
+   Meilensteine + Diagnosen: der frische Lauf lief ab Tick 1 mit
+   abgeschalteter Formung + abgesenktem Neugier-Boden und der Report
+   meldete "Plateau" gegen einen fremden Bestwert.
+2. Q-Kalibrierungs-Text behauptete immer "ueberschaetzt sich", auch bei
+   negativer Differenz (und ignorierte den systematischen gamma-Abzins-
+   Anteil).
+3. Curriculum-Starts vermischten sich unsichtbar mit natuerlichen Partien
+   in der Laengen-Statistik (23.803 Episoden im Eimer 60-69 vs. 1.763 in
+   Runde 3 — groesstenteils Konstruktions-Artefakt, kein Vergleich moeglich).
+
+**Umgesetzt** (alles verifiziert: py_compile, Unit-Checks, End-to-End-
+Smoke-Lauf mit Report-Inspektion):
+- `trainer.py`: **eval_best_run** (Niveau DIESES Laufs) von **eval_best**
+  (Schutzschwelle der Datei) getrennt. Formung/Neugier-Boden/LR-Treppe/
+  Diagnosen haengen jetzt am Lauf-Niveau; die Schwelle schuetzt NUR noch
+  die Champion-Datei. Bei --weiter auf demselben Brett erbt eval_best_run
+  das Champion-Niveau (der Bot IST ja so gut). `champion_floor_info`
+  protokolliert Herkunft (Wert + Wahrnehmung) der Schwelle.
+- **Runbest-Checkpoint** `models/dqn_runbest_<cols>x<rows>.pt`: bester
+  Stand jedes Laufs wird IMMER gesichert — vorher warf ein Lauf, der die
+  fremde Schwelle nicht knackte, sein gesamtes Ergebnis weg.
+- **Pruefungs-Historie** (`eval_history`): je Pruefung min/median/max
+  (Streuung!), Zuege/s seit letzter Pruefung (haette den memory.py-
+  Einbruch sofort gemeldet), Loss, Start-Q, epsilon. Als Tabelle im
+  Report, komplett im JSON, min/median/max auch als neue CSV-Spalten.
+- **Episode-Log + Report trennen Curriculum-Starts von natuerlichen
+  Partien** (Flag je Episode; getrennte Todesursachen-Tabellen; Score-
+  Histogramm nur natuerlich; Zuege/Frucht bei Curriculum ausgeblendet,
+  weil der geerbte Start-Score die Zahl sinnlos macht).
+- **Diagnosen ueberarbeitet**: Plateau gegen Lauf-Bestwert; Loss NORMIERT
+  auf die Q-Skala (wachsende Q-Werte ziehen den absoluten Loss physikalisch
+  mit hoch — erst ein steigendes Verhaeltnis ist ein Signal); NEU:
+  Geschwindigkeits-Diagnose (Drittel-Vergleich der Zuege/s); NEU: Hinweis,
+  wenn die Schutzschwelle von einer anderen Wahrnehmung stammt.
+  Q-Kalibrierung jetzt richtungsbewusst mit Erklaerung des Abzins-Anteils.
+- **Headless-Ausgabe** zeigt `Lauf-best` statt der fremden Schwelle (die
+  stand dort den ganzen Tag als irrefuehrendes "best 87.2").
+- **A/B-CLI**: `--seed N`, `--curriculum ANTEIL`, `--pfadfokus ANTEIL` —
+  ein Unterschied pro Vergleich, ohne config.py anzufassen (C-10).
+- **NEU: Pfad-Fokus-Regler** (Lucas Idee, "erst sicher, dann schnell",
+  2026-07-24 auf EINEN Regler vereinheitlicht): `cfg.pfad_fokus` (0.0..1.0)
+  mischt LINEAR zwischen reinem Fruchtsammeln (0.0, heutiges Verhalten)
+  und reinem Ueberleben (1.0, Frucht bringt dann NULL Belohnung — ob
+  gefressen oder nicht ist egal, nur noch der Ueberlebens-Bonus pro Zug
+  zaehlt). Verhungern (starve_limit) zwingt trotzdem zum Fressen — Frucht
+  wird so zum MITTEL fuers Ueberleben statt zum Selbstzweck. Der
+  tatsaechlich wirksame Wert (`MultiGameTrainer.pfad_fokus_aktuell`)
+  blendet wie die Formung deterministisch Richtung 0 aus, sobald das
+  Lauf-Niveau steigt (Schwellen `pfad_fokus_aus_ab`/`_null_ab`, 80/120
+  brett-skaliert) — der Bot hat dann einen sicheren Weg gefunden, jetzt
+  wird er schrittweise wieder aufs Fruchtsammeln (= Tempo) getrimmt.
+  Getestet: 0.0 exakt altes Verhalten, 1.0 Frucht=0/nur Bonus, Ausblenden
+  bei steigendem Lauf-Niveau korrekt. Code-Standard AUS (`pfad_fokus=0.0`)
+  bis eine A/B-Messung ihn belegt.
+- Ausserdem aus derselben Session: `memory.py` Set→Array-Fix (Zuege/s
+  stabil statt 11k→3k-Einbruch, 31.8x schnellere Batch-Ziehung im Test).
+
+**Messstand rich_grid7 + Curriculum** (Lauf 152712, 45 Min, ~110k
+Episoden): Lauf-Bestwert 63.8, hohe Laengen-Eimer unveraendert ~71-79%
+Selbstkollision — ABER konfundiert (Runde 3 war rich_grid9 + fruit_count 10
++ eps_decay 150k) und durch die faelschlich abgeschaltete Formung verzerrt.
+Erst die naechsten Laeufe mit dem reparierten Fundament sind belastbar.
+
+**Nachtrag Runde 5b** (noch selber Tag, Lucas Live-Test im Fenster deckte
+zwei weitere Probleme auf):
+- **Cross-Run-Kontamination beim Curriculum** (derselbe Fehlertyp wie die
+  Champion-Schutzschwelle, nur an zweiter Stelle): ein frischer Lauf lud
+  bisher beim Start blind ALLE gespeicherten Stellungen von der Platte —
+  auch von einem voellig anderen frueheren Lauf (andere Wahrnehmung, ganz
+  anderer Trainingsstand). Sichtbarer Effekt: ein gerade erst gestartetes
+  Netz bekam ab Episode 1 Laenge-40+-Stellungen eines fremden, viel
+  staerkeren Bots vorgesetzt — sah im Fenster kaputt aus ("ploetzlich extrem
+  lange Schlange") und war es konzeptionell auch, weil das Curriculum ja
+  gerade die EIGENEN erreichten Grenzen widerspiegeln soll (Lucas: "macht
+  natuerlich nur Sinn vom eigenen Run"). Fix: `curriculum_snapshots` wird
+  nur noch geladen, wenn dieser Lauf tatsaechlich denselben Bot fortsetzt
+  (`--weiter`/Champion-Weitertraining) — ein frischer Lauf startet immer
+  mit leerem Vorrat und baut ihn nur aus seinen EIGENEN Pruefungen auf.
+- **Trap-Erkennung** (Lucas Idee): manche gespeicherte Stellung koennte in
+  Wirklichkeit schon unrettbar sein (die Pruefpartie war beim Einsammeln
+  zwar noch am Leben, aber vielleicht schon in einer Falle ohne Ausweg).
+  Jetzt wird je Stellung mitgezaehlt, wie oft jeder der 3 moeglichen
+  ERSTEN Zuege (geradeaus/links/rechts) versucht wurde und wie oft das
+  schnell (≤15 Zuege) in Wand/Selbst-Tod endete. Eine Stellung wird erst
+  entfernt, wenn ALLE 3 Pfade mindestens 5x versucht wurden UND jeder davon
+  zu ≥90% schnell gestorben ist — ein einzelner schlechter Pfad reicht
+  nicht (koennte ueber einen anderen ersten Zug loesbar sein). Reine
+  Trainings-Buchhaltung (Ringpuffer-Pflege), keine Info an die KI, keine
+  Strategie. Entfernungen landen im Meilenstein-Log und im Report
+  ("Curriculum: ... X als aussichtslos entfernt").
+- **Menue erweitert**: Endspiel-Curriculum jetzt bis 100% waehlbar (0/10/25/
+  40/60/80/100%), nicht mehr bei 40% gedeckelt — Lucas Wunsch, das selbst
+  ausprobieren zu koennen.
+- Getestet: frischer Lauf startet mit 0 geladenen Stellungen (auch wenn
+  die Datei voll ist); Trap-Entfernung greift nur nach allen 3 Pfaden UND
+  nur bei echter Aussichtslosigkeit (Gegentest: bleibt erhalten, wenn ein
+  Pfad auch nur einmal eine echte Chance zeigte oder wenn ein Pfad noch gar
+  nicht getestet wurde).
+
+**Nachtrag Runde 5c** (noch selber Tag: Pfad-Fokus-Leck + Auto-Tuner):
+- **Pfad-Fokus-Leck gefixt** (Lucas Live-Beobachtung: "selbst bei 100%
+  wird noch Fruechte gesammelt"): die Naeher/Weiter-Formung lief beim
+  Pfad-Fokus ungebremst weiter — bei 100% Fokus war die Frucht zwar 0
+  wert, aber der WEGWEISER dorthin (+0.1/-0.12 je Zug) staerker als der
+  Ueberlebens-Bonus (0.05). Jetzt skaliert die Formung mit
+  `(1 - pfad_fokus_aktuell)` mit runter. Getestet ueber alle
+  fokus×formung-Kombinationen: bei 100% Fokus ist die Belohnung komplett
+  richtungs- und frucht-blind (Frucht-, Naeher-, Weg-, Neutral-Zug alle
+  exakt gleich), einziger Frucht-Anreiz bleibt indirekt die
+  Verhungern-Regel — genau wie gewollt.
+- **Curriculum-Persistenz nur noch fuer die Champion-Linie**: frische
+  Laeufe schreiben ihren Stellungs-Vorrat nicht mehr auf die Platte
+  (haetten sonst den Vorrat des Champions ueberschrieben — dieselbe
+  Cross-Run-Kontamination wie beim Laden, nur rueckwaerts; besonders
+  kritisch, sobald der Auto-Tuner dutzende frische Laeufe macht).
+- **`--override FELD=WERT`** in train_dqn.py (mehrfach angebbar): JEDES
+  DQNConfig-Feld laesst sich fuer einen einzelnen Headless-Lauf setzen;
+  unbekannte Feldnamen sind ein harter Fehler. Grundlage fuer den Tuner.
+- **NEU: `auto_tuner.py`** (Lucas Auftrag "vollautonome Config-Suche"):
+  laeuft unbeaufsichtigt (z.B. ueber Nacht/ganzen Tag), misst erst die
+  Basis (Standard + rich_grid7) mit festen Seeds und gleichem
+  Wanduhr-Budget je Lauf (Standard 12 Min, 2 Seeds), aendert dann je
+  Kandidat GENAU EINE Einstellung aus einem definierten Suchraum (21
+  Parameter: lr, gamma, n_step, batch, hidden, num_games, fruit_count,
+  eps-*, train_every, target_update, perception, curriculum_anteil,
+  pfad_fokus(+bonus), balance_anteil, spiegel_lernen, prioritized,
+  activation, reward_death/step), vergleicht gegen die Bestmarke
+  (Annahme nur bei >2% Verbesserung), verwirft sonst. Verworfene Werte
+  werden mit 20% Wahrscheinlichkeit bis zu 3x ERNEUT getestet (gegen
+  Pech-Laeufe). Alle 8 Kandidaten wird die Bestmarke frisch nachgemessen
+  (gegen Waerme-Drift des Macs). Bewusst SEQUENZIELL statt 5 parallel:
+  parallele Laeufe teilen sich CPU/Waermebudget → Wanduhr-Scores waeren
+  unvergleichbar, dazu Datei-Kollisionen. Protokoll je Tuner-Lauf in
+  `logs/autotuner-<zeit>/`: laeufe.csv (jeder einzelne Trainingslauf mit
+  Config+Score+Report-Verweis), protokoll.md (jede Entscheidung),
+  zustand.json (persistent, per `--fortsetzen` wiederaufnehmbar),
+  abschlussbericht.md (beste Config + Verlauf + "Gelerntes je Parameter"),
+  plus Modell-Sicherung vor dem Start. Stoppt bei Konvergenz (30
+  Verwerfungen in Folge), nach `--max-stunden` (Standard 24) oder per
+  Strg+C — Abschlussbericht kommt in allen Faellen. End-to-end getestet
+  inkl. Fortsetzen und Retest-Mechanik.
+  Start: `python auto_tuner.py` (Optionen: `--minuten`, `--seeds`,
+  `--max-stunden`, `--konvergenz`, `--marge`, `--fortsetzen`).
+
+**Naechster Schritt (Empfehlung)**: Zwei saubere A/B-Paare mit je 2 Seeds,
+gleiches Zeitbudget, identische Basis (rich_grid7, Standard-Defaults):
+1. `--curriculum 0` vs. `--curriculum 0.25` — wirkt das Curriculum?
+2. `--pfadfokus 0` vs. `--pfadfokus 0.7` (o.ae.) — bringt der Pfad-Fokus-
+   Regler die besseren Pfade?
+Danach datenbasiert entscheiden; bleibt Selbstkollision in den hohen
+Eimern trotz allem hart, ist die Wahrnehmung die Grenze → Phase 4 (CNN).
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,
