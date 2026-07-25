@@ -948,6 +948,146 @@
       "parameter": "target_update",
       "neuer_wert": 2000,
       "mittel": 139.95
+    },
+    {
+      "nr": 131,
+      "durchlauf": 4,
+      "parameter": "num_games",
+      "neuer_wert": 8,
+      "mittel": 130.85
+    },
+    {
+      "nr": 132,
+      "durchlauf": 4,
+      "parameter": "num_games",
+      "neuer_wert": 24,
+      "mittel": 131.05
+    },
+    {
+      "nr": 133,
+      "durchlauf": 4,
+      "parameter": "n_step",
+      "neuer_wert": 1,
+      "mittel": 123.55
+    },
+    {
+      "nr": 134,
+      "durchlauf": 4,
+      "parameter": "n_step",
+      "neuer_wert": 3,
+      "mittel": 137.65
+    },
+    {
+      "nr": 135,
+      "durchlauf": 4,
+      "parameter": "perception",
+      "neuer_wert": "rich",
+      "mittel": 124.5
+    },
+    {
+      "nr": 136,
+      "durchlauf": 4,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid5",
+      "mittel": 126.95
+    },
+    {
+      "nr": 137,
+      "durchlauf": 4,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid7",
+      "mittel": 133.4
+    },
+    {
+      "nr": 138,
+      "durchlauf": 4,
+      "parameter": "reward_death",
+      "neuer_wert": -20.0,
+      "mittel": 94.45
+    },
+    {
+      "nr": 139,
+      "durchlauf": 4,
+      "parameter": "activation",
+      "neuer_wert": "tanh",
+      "mittel": 121.65
+    },
+    {
+      "nr": 140,
+      "durchlauf": 4,
+      "parameter": "prioritized",
+      "neuer_wert": true,
+      "mittel": 131.7
+    },
+    {
+      "nr": 141,
+      "durchlauf": 4,
+      "parameter": "spiegel_lernen",
+      "neuer_wert": true,
+      "mittel": 105.65
+    },
+    {
+      "nr": 142,
+      "durchlauf": 4,
+      "parameter": "eps_end",
+      "neuer_wert": 0.05,
+      "mittel": 131.8
+    },
+    {
+      "nr": 143,
+      "durchlauf": 4,
+      "parameter": "fruit_count",
+      "neuer_wert": 1,
+      "mittel": 66.55
+    },
+    {
+      "nr": 144,
+      "durchlauf": 4,
+      "parameter": "fruit_count",
+      "neuer_wert": 3,
+      "mittel": 88.1
+    },
+    {
+      "nr": 145,
+      "durchlauf": 4,
+      "parameter": "fruit_count",
+      "neuer_wert": 5,
+      "mittel": 117.6
+    },
+    {
+      "nr": 146,
+      "durchlauf": 4,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.0005,
+      "mittel": 133.0
+    },
+    {
+      "nr": 147,
+      "durchlauf": 4,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.002,
+      "mittel": 141.9
+    },
+    {
+      "nr": 148,
+      "durchlauf": 4,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.02,
+      "mittel": 146.2
+    },
+    {
+      "nr": 149,
+      "durchlauf": 4,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.1,
+      "mittel": 134.15
+    },
+    {
+      "nr": 150,
+      "durchlauf": 4,
+      "parameter": "gamma",
+      "neuer_wert": 0.95,
+      "mittel": 115.5
     }
   ],
   "verlauf": [
@@ -965,17 +1105,6 @@
   ],
   "durchlauf": 4,
   "pass_queue": [
-    "num_games",
-    "n_step",
-    "perception",
-    "reward_death",
-    "activation",
-    "prioritized",
-    "spiegel_lernen",
-    "eps_end",
-    "fruit_count",
-    "learning_rate",
-    "pfad_fokus_bonus",
     "gamma",
     "hidden",
     "balance_anteil",
@@ -985,9 +1114,9 @@
     "eps_decay_steps"
   ],
   "pass_verbessert": false,
-  "kandidaten_gesamt": 130,
+  "kandidaten_gesamt": 150,
   "verbesserungen": 10,
-  "laeufe_gesamt": 134,
+  "laeufe_gesamt": 154,
   "seeds": 1,
   "minuten": 10.0,
   "_pass_seeds": [

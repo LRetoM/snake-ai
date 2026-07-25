@@ -278,3 +278,43 @@ Gestartet: 2026-07-24 17:48:01
 - 16:02 [D4] Kandidat #130: target_update -> 2000 (Bestmarke 144.70)
 - 16:12     Ergebnis: 139.95
 - 16:12 [D4] Kandidat #131: num_games -> 8 (Bestmarke 144.70)
+- 16:22     Ergebnis: 130.85
+- 16:22 [D4] Kandidat #132: num_games -> 24 (Bestmarke 144.70)
+- 16:32     Ergebnis: 131.05
+- 16:32 [D4] Kandidat #133: n_step -> 1 (Bestmarke 144.70)
+- 16:42     Ergebnis: 123.55
+- 16:42 [D4] Kandidat #134: n_step -> 3 (Bestmarke 144.70)
+- 16:52     Ergebnis: 137.65
+- 16:52 [D4] Kandidat #135: perception -> 'rich' (Bestmarke 144.70)
+- 17:02     Ergebnis: 124.50
+- 17:02 [D4] Kandidat #136: perception -> 'rich_grid5' (Bestmarke 144.70)
+- 17:12     Ergebnis: 126.95
+- 17:12 [D4] Kandidat #137: perception -> 'rich_grid7' (Bestmarke 144.70)
+- 17:22     Ergebnis: 133.40
+- 17:22 [D4] Kandidat #138: reward_death -> -20.0 (Bestmarke 144.70)
+- 17:32     Ergebnis: 94.45
+- 17:32 [D4] Kandidat #139: activation -> 'tanh' (Bestmarke 144.70)
+- 17:42     Ergebnis: 121.65
+- 17:42 [D4] Kandidat #140: prioritized -> True (Bestmarke 144.70)
+- 17:52     Ergebnis: 131.70
+- 17:52 [D4] Kandidat #141: spiegel_lernen -> True (Bestmarke 144.70)
+- 18:02     Ergebnis: 105.65
+- 18:02 [D4] Kandidat #142: eps_end -> 0.05 (Bestmarke 144.70)
+- 18:12     Ergebnis: 131.80
+- 18:12 [D4] Kandidat #143: fruit_count -> 1 (Bestmarke 144.70)
+- 18:22     Ergebnis: 66.55
+- 18:22 [D4] Kandidat #144: fruit_count -> 3 (Bestmarke 144.70)
+- 18:32     Ergebnis: 88.10
+- 18:32 [D4] Kandidat #145: fruit_count -> 5 (Bestmarke 144.70)
+- 18:43     Ergebnis: 117.60
+- 18:43 [D4] Kandidat #146: learning_rate -> 0.0005 (Bestmarke 144.70)
+- 18:53     Ergebnis: 133.00
+- 18:53 [D4] Kandidat #147: learning_rate -> 0.002 (Bestmarke 144.70)
+- 19:03     Ergebnis: 141.90
+- 19:03 [D4] Kandidat #148: pfad_fokus_bonus -> 0.02 (Bestmarke 144.70)
+- 19:13     Ergebnis: 146.20
+- 19:13 [D4] Kandidat #149: pfad_fokus_bonus -> 0.1 (Bestmarke 144.70)
+- 19:23     Ergebnis: 134.15
+- 19:23 [D4] Kandidat #150: gamma -> 0.95 (Bestmarke 144.70)
+- 19:33     Ergebnis: 115.50
+- 19:33 [D4] Kandidat #151: gamma -> 0.97 (Bestmarke 144.70)

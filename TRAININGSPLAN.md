@@ -201,6 +201,14 @@ lassen, danach `python auto_tuner.py --basis-von logs/autotuner-<alt>/
 zustand.json --minuten 20` fuer eine zweite, gruendlichere Runde ab dem
 gelernten Startpunkt.
 
+**Nachtrag Runde 5e** (2026-07-25): Exakter Umsetzungsplan für die
+naechsten fuenf Netz-/Trainings-Upgrades (mitwachsendes Curriculum,
+Dueling-Kopf, Noisy Nets, CNN-Wahrnehmung, QR-DQN) geschrieben —
+**eigenes Dokument `AUSBAUPLAN.md`** im Repo-Root, gleicher Spezifikations-
+Stil wie Teil C hier (exakte Dateien/Felder/Signaturen/Abnahmetests je
+Phase, Reihenfolge A→E, Checkpoint-Kompatibilitaets-Regeln, Sperrliste).
+Noch NICHTS davon umgesetzt — Auftrag "setze Phase X um" genuegt spaeter.
+
 **Messstand nach ~15h (2026-07-25, 10-Min-Fenster, noch laufend)**:
 Durchlauf 3, 9 angenommene Verbesserungen seit Basis (Prüfung 65.65 →
 146.2, ≈48%→58,5% Feldfüllung im Schnitt). Angenommene Kette: `perception=
