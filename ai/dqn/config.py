@@ -196,6 +196,29 @@ class DQNConfig:
     curriculum_schwellen_relativ: tuple = (0.5, 0.65, 0.8)
     curriculum_schwelle_min: int = 40   # Untergrenze, solange der Bot schwach ist
 
+    # "Sieg-nah"-Fokus (2026-07-25, Lucas Ziel: "hoechste Prioritaet, das
+    # ganze Feld zu fuellen"). Befund, der das ausgeloest hat: in KEINEM
+    # bisherigen Lauf kam Sieg% je ueber 0 -- der Bot hat noch NIE gewonnen.
+    # Das heisst: reward_win konnte bisher kein einziges Mal tatsaechlich
+    # feuern, egal wie hoch er steht -- er ist bisher rein theoretisch. Die
+    # eigentliche Huerde ist also nicht "wird Sieg stark genug belohnt",
+    # sondern "bekommt der Bot ueberhaupt oft genug die Chance, den letzten
+    # Schritt zu ueben, damit ein Sieg erstmals passieren kann".
+    #
+    # Deshalb IMMER zusaetzlich zu den 3 normalen Curriculum-Schwellen (egal
+    # ob fest oder mitwachsend) eine 4. Stellung sichern: knapp UEBER dem
+    # aktuellen Lauf-Bestwert (`eval_best_run + curriculum_sieg_abstand`,
+    # gedeckelt kurz vorm vollen Feld). Bewusst RELATIV zum eigenen
+    # Bestwert statt einer festen hohen Zahl -- so ist es immer ein
+    # erreichbarer naechster Schritt, kein unerreichbar weit entferntes
+    # Ziel, und rueckt mit jedem Fortschritt automatisch naeher an den
+    # echten Sieg heran. Default AN, weil das direkt Lucas explizit
+    # genanntes Hauptziel bedient (kein A/B-Experiment, sondern eine
+    # bewusste Prioritaets-Entscheidung) -- abschaltbar, falls sich zeigt,
+    # dass es nicht hilft.
+    curriculum_sieg_fokus: bool = True
+    curriculum_sieg_abstand: int = 20
+
     # ------------------------------------------------------------------ #
     # Symmetrie-Verdopplung (TRAININGSPLAN.md 2.6)
     # ------------------------------------------------------------------ #
@@ -265,7 +288,16 @@ class DQNConfig:
     # Zusaetzlich zur normalen Frucht-Belohnung, wenn dabei das FELD KOMPLETT
     # voll wird (TRAININGSPLAN.md 2.4) -- ohne das gibt das eigentliche Ziel
     # (100% Fuellung) nur so viel wie jede andere Frucht.
-    reward_win: float = 100.0
+    # 2026-07-25 von 100 auf 1000 erhoeht: eine volle Partie sammelt allein
+    # durch normales Fruchtfressen schon ~2500 Belohnung ein (252 Fruechte x
+    # 10) -- ein Sieg-Bonus von nur 100 ging darin fast unter und konnte den
+    # LETZTEN Schritt kaum als "das mit Abstand Wichtigste" auszeichnen.
+    # Wichtig zu wissen: dieser Wert hat bisher trotzdem NIE gefeuert -- in
+    # keinem bisherigen Report kam Sieg% > 0 vor. Der eigentliche Hebel ist
+    # deshalb curriculum_sieg_fokus (siehe oben): der muss dem Bot erst die
+    # Chance geben, ueberhaupt mal zu gewinnen, bevor dieser Bonus greifen
+    # kann. Beide Aenderungen gehoeren zusammen.
+    reward_win: float = 1000.0
     # TRAININGSPLAN.md 2.4: die Naeher/Weiter-Formung (reward_closer/farther)
     # hilft im FRUEHSPIEL enorm (siehe reward_closer/farther oben), belohnt
     # aber den KUERZESTEN Weg zur Frucht -- im ENDSPIEL ist der kuerzeste Weg

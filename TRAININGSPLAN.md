@@ -285,6 +285,49 @@ Tuner-Suchraum und werden dort fair mitgetestet.
 
 Details, Abnahmetests und die A/B-Empfehlungen je Phase: `AUSBAUPLAN.md`.
 
+### Runde 7 (2026-07-25) — Sieg-Fokus: der Bot hat noch NIE gewonnen
+
+**Befund** (Lucas Frage "wie machen wir den Bot wirklich gut"): Scan durch
+ALLE bisherigen Reports zeigt `Sieg% > 0` in KEINEM einzigen Eintrag — der
+Bot hat noch nie das Feld komplett gefuellt. Das aendert die Diagnose
+entscheidend: `reward_win` (der Sieg-Bonus) konnte bisher kein einziges
+Mal tatsaechlich feuern, egal wie hoch er stand -- er war rein
+theoretisch. Die Huerde ist also nicht "Sieg zu schwach belohnt", sondern
+"der Bot bekommt nicht oft genug die Chance, den letzten Schritt zu
+ueben, damit ein Sieg ueberhaupt zum ersten Mal passieren kann".
+
+**Zwei zusammengehoerige Aenderungen**:
+- **NEU `curriculum_sieg_fokus`** (Default AN): zusaetzlich zu den 3
+  normalen Curriculum-Schwellen (fest 40/50/60 oder mitwachsend) wird
+  IMMER eine 4. Stellung gesichert, knapp UEBER dem aktuellen Lauf-
+  Bestwert (`eval_best_run + curriculum_sieg_abstand`, Default +20,
+  gedeckelt kurz vorm vollen Feld). Bewusst relativ zum eigenen Bestwert
+  statt einer festen hohen Zahl -- immer ein erreichbarer naechster
+  Schritt, kein unerreichbar weit entferntes Ziel, rueckt mit jedem
+  Fortschritt automatisch naeher an den echten Sieg heran. Anders als die
+  meisten AUSBAUPLAN-Schalter bewusst NICHT hinter einer A/B-Messung
+  versteckt, sondern direkt an -- das ist keine experimentelle Variante,
+  sondern die bewusste Umsetzung von Lucas explizit genanntem Hauptziel.
+- **`reward_win` 100 -> 1000**: eine volle Partie sammelt allein durchs
+  normale Fruchtfressen schon ~2500 Belohnung (252 Fruechte x 10) -- ein
+  Bonus von nur 100 ging darin unter und konnte den LETZTEN Schritt kaum
+  als "das mit Abstand Wichtigste" auszeichnen.
+- Getestet: Schwellen-Formel bei mehreren Lauf-Niveaus (0/100/150/200/240)
+  korrekt inkl. Deckel; Ausschalten ergibt exakt das alte Verhalten;
+  Kombination mit `curriculum_mitwachsend` korrekt; echter Trainer-Lauf
+  sammelt damit tatsaechlich Stellungen ein; Menue-Zeile "Sieg-Fokus"
+  ergaenzt (jetzt 29 Menue-Eintraege).
+- Zusaetzlich (dieselbe Sitzung): **Menue-Scroll-Fix** -- mit inzwischen
+  29 Reglern passte laengst nicht mehr alles ins Fenster (Lucas
+  Rueckmeldung: untere Zeilen unsichtbar, aber trotzdem per Enter
+  ausloesbar). `_draw_menu` zeigt jetzt nur noch ein Fenster von
+  `MENU_ZEILEN_SICHTBAR` Zeilen, das der Auswahl folgt, mit ▲/▼-Hinweisen
+  bei verdecktem Inhalt. Ausserdem alle bis dahin nur per `--override`
+  erreichbaren Regler (Batch-Groesse, target_update, Lerntakt, Neugier-
+  Boden, Aktivierung, Symmetrie-Spiegeln, Laengen-Balance, Todes-/
+  Zeitstrafe, Pfad-Fokus-Bonus) ins Menue nachgezogen -- Lucas Wunsch
+  "alles im Fenster einstellen koennen".
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,

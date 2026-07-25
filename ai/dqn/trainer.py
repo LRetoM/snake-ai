@@ -603,16 +603,33 @@ class MultiGameTrainer:
         (z.B. Bestwert 150 -> 75/97/120), nie unter curriculum_schwelle_min
         und nie ganz am Sieg-Ende (cols*rows - 10) -- so uebt der Bot immer
         an seiner AKTUELLEN Grenze statt an einer von gestern.
+
+        ZUSAETZLICH (curriculum_sieg_fokus, Default AN, 2026-07-25): immer
+        noch eine weitere Schwelle knapp UEBER dem Lauf-Bestwert
+        (eval_best_run + curriculum_sieg_abstand) -- unabhaengig davon, ob
+        mitwachsend an oder aus ist. Grund: in keinem bisherigen Lauf kam
+        Sieg% je ueber 0, der Bot hat also noch NIE gewonnen -- reward_win
+        konnte deshalb noch nie feuern. Diese Schwelle gibt gezielt
+        Wiederholung genau am erreichbaren naechsten Schritt Richtung Sieg
+        (nicht an einer weit entfernten festen Zahl), damit ein Sieg
+        ueberhaupt zum ersten Mal passieren und von reward_win verstaerkt
+        werden kann.
         """
         cfg = self.cfg
         if not getattr(cfg, "curriculum_mitwachsend", False):
-            return _CURRICULUM_LENGTHS
+            basis = _CURRICULUM_LENGTHS
+        else:
+            deckel = cfg.grid_cols * cfg.grid_rows - 10
+            basis = tuple(
+                min(deckel, max(cfg.curriculum_schwelle_min,
+                                int(self.eval_best_run * f)))
+                for f in cfg.curriculum_schwellen_relativ
+            )
+        if not getattr(cfg, "curriculum_sieg_fokus", True):
+            return basis
         deckel = cfg.grid_cols * cfg.grid_rows - 10
-        return tuple(
-            min(deckel, max(cfg.curriculum_schwelle_min,
-                            int(self.eval_best_run * f)))
-            for f in cfg.curriculum_schwellen_relativ
-        )
+        sieg_nah = min(deckel, int(self.eval_best_run) + cfg.curriculum_sieg_abstand)
+        return tuple(sorted(set(basis) | {sieg_nah}))
 
     def _reset_or_curriculum(self, i: int, game: SnakeGame) -> None:
         """Setzt ein TRAININGS-Spiel zurueck -- mit `curriculum_anteil`

@@ -292,6 +292,7 @@ class DQNDashboard:
         self.noisy_on = getattr(cfg, "noisy", False)
         self.distributional_on = getattr(cfg, "distributional", False)
         self.curriculum_mitwachsend_on = getattr(cfg, "curriculum_mitwachsend", False)
+        self.sieg_fokus_on = getattr(cfg, "curriculum_sieg_fokus", True)
 
     def _menu_entries(self) -> list[tuple[str, str | None, str]]:
         entries: list[tuple[str, str | None, str]] = []
@@ -341,6 +342,8 @@ class DQNDashboard:
             ("Curriculum-Schwellen wachsen mit",
              "An" if self.curriculum_mitwachsend_on else "Aus (fest 40/50/60)",
              "curriculum_mit"),
+            ("Sieg-Fokus (immer knapp über Bestwert üben)",
+             "An" if self.sieg_fokus_on else "Aus", "sieg_fokus"),
             ("Pfad-Fokus (erst sicher, dann schnell)",
              PFADFOKUS_PRESETS[self.pfadfokus_idx][0], "pfadfokus"),
             ("Pfad-Fokus-Bonus je Zug",
@@ -442,6 +445,8 @@ class DQNDashboard:
             self.pfadfokus_idx = (self.pfadfokus_idx + delta) % len(PFADFOKUS_PRESETS)
         elif kind == "curriculum_mit":
             self.curriculum_mitwachsend_on = not self.curriculum_mitwachsend_on
+        elif kind == "sieg_fokus":
+            self.sieg_fokus_on = not self.sieg_fokus_on
         elif kind == "dueling":
             self.dueling_on = not self.dueling_on
         elif kind == "noisy":
@@ -523,6 +528,7 @@ class DQNDashboard:
         cfg.curriculum_anteil = CURRICULUM_PRESETS[self.curriculum_idx][1]
         cfg.pfad_fokus = PFADFOKUS_PRESETS[self.pfadfokus_idx][1]
         cfg.curriculum_mitwachsend = self.curriculum_mitwachsend_on
+        cfg.curriculum_sieg_fokus = self.sieg_fokus_on
         cfg.dueling = self.dueling_on
         cfg.noisy = self.noisy_on
         cfg.distributional = self.distributional_on
