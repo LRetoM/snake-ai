@@ -108,6 +108,8 @@ EPS_PRESETS = [
     ("Normal (40k Ticks)", 40_000),
     ("Gründlich (80k Ticks)", 80_000),
     ("Sehr gründlich (150k)", 150_000),
+    ("Nachtlauf (2 Mio Ticks)", 2_000_000),
+    ("Mehrtägig (5 Mio Ticks)", 5_000_000),
 ]
 GAMMA_PRESETS = [
     ("Kurzsichtig (0.90)", 0.90),

@@ -328,6 +328,35 @@ ueben, damit ein Sieg ueberhaupt zum ersten Mal passieren kann".
   Zeitstrafe, Pfad-Fokus-Bonus) ins Menue nachgezogen -- Lucas Wunsch
   "alles im Fenster einstellen koennen".
 
+### Runde 8 (2026-07-25) — Warum das Plateau immer nach 10-15 Min kommt
+
+**Lucas Frage**: kann der Bot ueberhaupt 8 Stunden sinnvoll lernen, oder
+plateaut er wieder wie in jedem kurzen Testlauf, weil "das Tagebuch
+(Replay-Puffer) einfach nur voll mit Plateau-Daten ist"?
+
+**Befund aus echten Zahlen** (`logs/dqn-20260724-152712.csv`, 45-Min-Lauf,
+1.885.983 Ticks / 2699,6 s = 698,6 Ticks/s):
+- Das Tagebuch (`buffer_size=1.000.000`) rotiert bei diesem Tempo komplett
+  durch in ca. 89 Sekunden (~1,5 Min) -- es ist WAEHREND DES GESAMTEN LAUFS
+  immer ein frisches, rollendes Fenster. Lucas Verdacht ("voll mit alten
+  Plateau-Daten") trifft technisch nicht zu, das Tagebuch ist nie "alt".
+- Der tatsaechliche Grund: `eps_decay_steps` ist eine feste TICK-Zahl
+  (80.000), keine Zeit-Vorgabe. Bei 698,6 Ticks/s ist die Neugier
+  (Epsilon) schon nach **Tick 80.544 = Sekunde 135,3 = 2,25 Minuten**
+  komplett auf dem Boden (0,005) -- UNABHAENGIG davon wie lang der Lauf
+  insgesamt dauert. Bei einem 8-Stunden-Lauf waeren das nur 0,4% der
+  Laufzeit; Epsilon waere nach 2 Minuten weg und dann 7h58min lang keine
+  nennenswerte Erkundung mehr moeglich.
+- Die Pruefungs-Werte des 45-Min-Laufs bestaetigen genau das Muster:
+  Anstieg auf ~55-65 bis Minute ~9-10, danach nur noch Pendeln in
+  derselben Bandbreite bis Minute 45 -- kein Netto-Fortschritt mehr, ab
+  exakt dem Zeitpunkt an dem Epsilon den Boden erreicht.
+- **Fix**: `eps_decay_steps` muss zur geplanten Lauflaenge passen statt
+  fest auf 80k zu stehen. Neue Menue-Presets in `EPS_PRESETS`
+  (`dashboard/dqn_view.py`): "Nachtlauf (2 Mio Ticks)" (~48 Min Abklingen
+  bei 698 Ticks/s) und "Mehrtägig (5 Mio Ticks)" fuer noch laengere Laeufe.
+  Kein Code sonst veraendert -- reine Config-Wahl je nach Budget.
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,
