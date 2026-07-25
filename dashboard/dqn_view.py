@@ -78,6 +78,9 @@ PERCEPTION_PRESETS = [
     ("Reich + Nahbereich 9×9 (120 Werte)", "rich_grid9"),
     ("Volles Feld (411 Werte)", "full_board"),
     ("Einfach (11 Werte)", "simple"),
+    # AUSBAUPLAN Phase D: ganzes Brett als Bild fuers Faltungs-Netz --
+    # _start_training koppelt dann automatisch cfg.network = "cnn".
+    ("Ganzes Brett als Bild (CNN)", "cnn_board"),
 ]
 HIDDEN_PRESETS = [
     ("Klein (128, 128)", (128, 128)),
@@ -241,6 +244,11 @@ class DQNDashboard:
             CURRICULUM_PRESETS, getattr(cfg, "curriculum_anteil", 0.0), 2)
         self.pfadfokus_idx = _preset_index(
             PFADFOKUS_PRESETS, getattr(cfg, "pfad_fokus", 0.0), 0)
+        # Architektur-Schalter (AUSBAUPLAN.md B/C/E) -- einfache An/Aus-Toggles.
+        self.dueling_on = getattr(cfg, "dueling", False)
+        self.noisy_on = getattr(cfg, "noisy", False)
+        self.distributional_on = getattr(cfg, "distributional", False)
+        self.curriculum_mitwachsend_on = getattr(cfg, "curriculum_mitwachsend", False)
 
     def _menu_entries(self) -> list[tuple[str, str | None, str]]:
         entries: list[tuple[str, str | None, str]] = []
@@ -277,8 +285,14 @@ class DQNDashboard:
             ("Tagebuch priorisieren", "An" if self.per_on else "Aus", "per"),
             ("Früchte", str(FRUIT_OPTIONS[self.fruit_idx]), "fruit"),
             ("Endspiel-Curriculum", CURRICULUM_PRESETS[self.curriculum_idx][0], "curriculum"),
+            ("Curriculum-Schwellen wachsen mit",
+             "An" if self.curriculum_mitwachsend_on else "Aus (fest 40/50/60)",
+             "curriculum_mit"),
             ("Pfad-Fokus (erst sicher, dann schnell)",
              PFADFOKUS_PRESETS[self.pfadfokus_idx][0], "pfadfokus"),
+            ("Dueling-Kopf", "An" if self.dueling_on else "Aus", "dueling"),
+            ("Noisy Nets (statt Epsilon)", "An" if self.noisy_on else "Aus", "noisy"),
+            ("Verteilungs-Lernen (QR)", "An" if self.distributional_on else "Aus", "distributional"),
             ("Gespeicherten Champion weitertrainieren", champ, "cont"),
             ("NEUES TRAINING STARTEN", None, "start"),
         ]
@@ -332,6 +346,14 @@ class DQNDashboard:
             self.curriculum_idx = (self.curriculum_idx + delta) % len(CURRICULUM_PRESETS)
         elif kind == "pfadfokus":
             self.pfadfokus_idx = (self.pfadfokus_idx + delta) % len(PFADFOKUS_PRESETS)
+        elif kind == "curriculum_mit":
+            self.curriculum_mitwachsend_on = not self.curriculum_mitwachsend_on
+        elif kind == "dueling":
+            self.dueling_on = not self.dueling_on
+        elif kind == "noisy":
+            self.noisy_on = not self.noisy_on
+        elif kind == "distributional":
+            self.distributional_on = not self.distributional_on
         elif kind == "cont":
             board_cols, board_rows = BOARD_PRESETS[self.board_idx][1]
             path = resolve_champion_path(board_cols, board_rows)
@@ -396,6 +418,15 @@ class DQNDashboard:
         cfg.fruit_count = FRUIT_OPTIONS[self.fruit_idx]
         cfg.curriculum_anteil = CURRICULUM_PRESETS[self.curriculum_idx][1]
         cfg.pfad_fokus = PFADFOKUS_PRESETS[self.pfadfokus_idx][1]
+        cfg.curriculum_mitwachsend = self.curriculum_mitwachsend_on
+        cfg.dueling = self.dueling_on
+        cfg.noisy = self.noisy_on
+        cfg.distributional = self.distributional_on
+        # CNN-Wahrnehmung und CNN-Netz gehoeren zwingend zusammen (siehe
+        # MultiGameTrainer.__init__) -- das Menue koppelt das automatisch,
+        # damit man im Fenster nicht versehentlich eine ungueltige
+        # Kombination starten kann.
+        cfg.network = "cnn" if cfg.perception == "cnn_board" else "mlp"
 
         # self._resume_champion_path wurde beim Umschalten von "Champion
         # weitertrainieren" (oder beim Fenster-Start mit --weiter) fest

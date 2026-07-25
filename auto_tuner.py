@@ -96,6 +96,17 @@ SUCHRAUM: dict[str, list] = {
     "activation": ["relu", "tanh"],
     "reward_death": [-20.0, -10.0],
     "reward_step": [-0.01, 0.0],
+    # AUSBAUPLAN.md-Schalter (Phasen A/B/C/E). Alle Default AUS -- der Tuner
+    # testet sie hier genauso fair wie jeden anderen Wert. BEWUSST NICHT im
+    # Suchraum: "network"/"perception=cnn_board" (Phase D) -- das CNN ist auf
+    # der CPU ~60-95x langsamer pro Zug (gemessen 2026-07-25) und wuerde bei
+    # gleichem WANDUHR-Budget immer verlieren, egal wie gut es lernt. Das
+    # braucht einen eigenen Vergleich mit laengerem Budget und angepasstem
+    # batch_size/train_every, kein Blind-Wuerfeln im Standard-Suchraum.
+    "curriculum_mitwachsend": [False, True],
+    "dueling": [False, True],
+    "noisy": [False, True],
+    "distributional": [False, True],
 }
 
 # Startpunkt der Suche: Code-Standard + die Menue-Empfehlung rich_grid7.

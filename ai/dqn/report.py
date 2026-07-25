@@ -262,6 +262,18 @@ def build_report(trainer) -> dict:
     curriculum_episoden = sum(d["episoden"] for d in todeslaengen_curriculum.values())
     natuerliche_episoden = sum(d["episoden"] for d in todeslaengen.values())
 
+    # Verteilung der Snapshot-Laengen im Vorrat (AUSBAUPLAN Phase A):
+    # zeigt sofort, ob mitwachsende Schwellen wirken (Laengen steigen mit).
+    snapshot_laengen = sorted(
+        len(s["snake"]) for s in getattr(trainer, "curriculum_snapshots", []))
+    vorrat_laengen = None
+    if snapshot_laengen:
+        vorrat_laengen = {
+            "min": snapshot_laengen[0],
+            "median": snapshot_laengen[len(snapshot_laengen) // 2],
+            "max": snapshot_laengen[-1],
+        }
+
     return {
         "erzeugt_am": time.strftime("%Y-%m-%d %H:%M:%S"),
         "brett": f"{cfg.grid_cols}x{cfg.grid_rows}",
@@ -289,6 +301,7 @@ def build_report(trainer) -> dict:
             "episoden_aus_curriculum": curriculum_episoden,
             "episoden_natuerlich": natuerliche_episoden,
             "traps_entfernt": getattr(trainer, "curriculum_traps_removed", 0),
+            "vorrat_laengen": vorrat_laengen,
         },
         "todesursachen_nach_laenge": todeslaengen,
         "todesursachen_nach_laenge_curriculum": todeslaengen_curriculum,
@@ -390,7 +403,10 @@ def _render_markdown(r: dict) -> str:
             f"{c['episoden_aus_curriculum']} Curriculum- vs. "
             f"{c['episoden_natuerlich']} natuerliche Episoden, "
             f"{c['traps_entfernt']} als aussichtslos entfernt "
-            "(alle 3 ersten Zuege sterben fast immer schnell).",
+            "(alle 3 ersten Zuege sterben fast immer schnell)."
+            + (f" Vorrats-Laengen min/median/max: {c['vorrat_laengen']['min']}/"
+               f"{c['vorrat_laengen']['median']}/{c['vorrat_laengen']['max']}."
+               if c.get("vorrat_laengen") else ""),
         ]
 
     if r["score_histogramm"]:

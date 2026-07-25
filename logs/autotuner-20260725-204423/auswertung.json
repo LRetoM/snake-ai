@@ -1,0 +1,10 @@
+{
+  "status": "per Strg+C beendet",
+  "best_overrides": {
+    "perception": "rich_grid7"
+  },
+  "best_score": 5.6,
+  "durchlaeufe": 1,
+  "laeufe_gesamt": 1,
+  "gelerntes_je_wert": {}
+}

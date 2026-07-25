@@ -215,6 +215,20 @@ class MultiGameTrainer:
         self.perceive, self.input_size, _labels = get_perception(
             cfg.perception, cfg.grid_cols, cfg.grid_rows)
 
+        # CNN-Netz und CNN-Wahrnehmung gehoeren zwingend zusammen (das Netz
+        # verlaesst sich exakt auf das Kanal-Layout von "cnn_board") -- ein
+        # Mismatch wuerde erst im Forward kryptisch crashen, deshalb hier
+        # frueh und mit klarer Meldung pruefen (AUSBAUPLAN Phase D).
+        ist_cnn_netz = getattr(cfg, "network", "mlp") == "cnn"
+        ist_cnn_wahrnehmung = cfg.perception == "cnn_board"
+        if ist_cnn_netz != ist_cnn_wahrnehmung:
+            raise ValueError(
+                "network='cnn' und perception='cnn_board' gehoeren zusammen -- "
+                f"aktuell: network='{getattr(cfg, 'network', 'mlp')}', "
+                f"perception='{cfg.perception}'. Beides setzen (z.B. "
+                "--override network='cnn' --override perception='cnn_board') "
+                "oder beides weglassen.")
+
         # Champion-Datei DIESES Bretts -- jede Brettgroesse hat ihre eigene
         # (siehe champion_path() oben im Modul).
         self.champion_file = champion_path(cfg.grid_cols, cfg.grid_rows)
@@ -252,8 +266,16 @@ class MultiGameTrainer:
         self._curriculum_rng = random.Random(base_seed + 555)
 
         self.agent = DQNAgent(cfg, self.input_size, seed=base_seed)
+        # Brettabhaengige Spiegelung (cnn_board) zur Laufzeit erzeugen und
+        # durchreichen -- kann nicht statisch in MIRROR_MAPS stehen, weil
+        # ihre Groesse erst mit cols/rows feststeht (siehe make_cnn_mirror).
+        mirror_entry = None
+        if cfg.perception == "cnn_board":
+            from ai.perception import make_cnn_mirror
+            mirror_entry = make_cnn_mirror(cfg.grid_cols, cfg.grid_rows)
         self.buffer = make_buffer(cfg, self.input_size,
-                                  rng=np.random.default_rng(base_seed + 999))
+                                  rng=np.random.default_rng(base_seed + 999),
+                                  mirror_entry=mirror_entry)
 
         self.game_cfg = GameConfig(
             grid_cols=cfg.grid_cols,
@@ -304,7 +326,8 @@ class MultiGameTrainer:
             self._resume(resume_from)
 
         # ---- Statistik ------------------------------------------------- #
-        self.epsilon = cfg.eps_start
+        # Bei Noisy Nets ist der Epsilon-Wuerfel komplett aus (siehe step()).
+        self.epsilon = 0.0 if getattr(cfg, "noisy", False) else cfg.eps_start
         self.total_steps = 0
         self.total_moves = 0
         self.total_episodes = 0
@@ -418,6 +441,8 @@ class MultiGameTrainer:
 
             progress = min(1.0, self.total_steps / max(1, cfg.eps_decay_steps))
             self.epsilon = cfg.eps_start + (cfg.eps_end - cfg.eps_start) * progress
+            if getattr(cfg, "noisy", False):
+                self.epsilon = 0.0
 
         # ---- Bestehenden Champion NIE mit einem schlechteren ueberschreiben - #
         # Das gilt auch bei einem FRISCHEN Lauf (kein --weiter) UND bei einem
@@ -498,6 +523,38 @@ class MultiGameTrainer:
                 f"Der gespeicherte Bot nutzt Aktivierung '{checkpoint_activation}', "
                 f"die aktuelle Einstellung ist '{self.cfg.activation}'."
             )
+        # Architektur-Schalter (AUSBAUPLAN.md): fehlt ein Feld im Checkpoint
+        # (aeltere Bots), gilt der alte Default -- ein MISMATCH zur aktuellen
+        # Einstellung ist dagegen ein harter Fehler, das state_dict wuerde
+        # sonst still in ein anders geformtes Netz geladen (oder kryptisch
+        # crashen).
+        for feld, alt_default in (("network", "mlp"), ("dueling", False),
+                                   ("noisy", False), ("distributional", False)):
+            im_checkpoint = checkpoint.get(feld, alt_default)
+            aktuell = getattr(self.cfg, feld, alt_default)
+            if im_checkpoint != aktuell:
+                raise ValueError(
+                    f"Der gespeicherte Bot wurde mit {feld}={im_checkpoint!r} "
+                    f"trainiert, die aktuelle Einstellung ist {aktuell!r}.")
+        if checkpoint.get("distributional", False):
+            cp_q = int(checkpoint.get("quantile_anzahl", 32))
+            if cp_q != int(getattr(self.cfg, "quantile_anzahl", 32)):
+                raise ValueError(
+                    f"Der gespeicherte Bot nutzt {cp_q} Quantile, die aktuelle "
+                    f"Einstellung ist {self.cfg.quantile_anzahl}.")
+        if checkpoint.get("network", "mlp") == "cnn":
+            # CNN-Geometrie muss passen, sonst hat das state_dict andere
+            # Formen (Conv-Kanaele) bzw. eine andere FC-Eingangsgroesse (Pool).
+            cp_k = tuple(checkpoint.get("cnn_kanaele", (16, 32)))
+            cp_p = int(checkpoint.get("cnn_pool", 6))
+            if cp_k != tuple(getattr(self.cfg, "cnn_kanaele", (16, 32))):
+                raise ValueError(
+                    f"Der gespeicherte Bot hat CNN-Kanaele {cp_k}, die aktuelle "
+                    f"Einstellung ist {tuple(self.cfg.cnn_kanaele)}.")
+            if cp_p != int(getattr(self.cfg, "cnn_pool", 6)):
+                raise ValueError(
+                    f"Der gespeicherte Bot nutzt CNN-Pool {cp_p}, die aktuelle "
+                    f"Einstellung ist {self.cfg.cnn_pool}.")
         self.agent.load_state_dict(checkpoint["state_dict"])
         self.resumed_from = path
         self._resume_meta = checkpoint
@@ -536,6 +593,26 @@ class MultiGameTrainer:
         os.makedirs(MODEL_DIR, exist_ok=True)
         with open(self.curriculum_file, "wb") as fh:
             pickle.dump(self.curriculum_snapshots, fh)
+
+    def _curriculum_schwellen(self) -> tuple[int, ...]:
+        """Bei welchen Laengen sichert die Pruefung Curriculum-Stellungen?
+
+        Standard (curriculum_mitwachsend=False): die festen Laengen aus
+        _CURRICULUM_LENGTHS (40/50/60) -- exakt das bisherige Verhalten.
+        Mitwachsend (AUSBAUPLAN Phase A): Anteile des LAUF-Bestwerts
+        (z.B. Bestwert 150 -> 75/97/120), nie unter curriculum_schwelle_min
+        und nie ganz am Sieg-Ende (cols*rows - 10) -- so uebt der Bot immer
+        an seiner AKTUELLEN Grenze statt an einer von gestern.
+        """
+        cfg = self.cfg
+        if not getattr(cfg, "curriculum_mitwachsend", False):
+            return _CURRICULUM_LENGTHS
+        deckel = cfg.grid_cols * cfg.grid_rows - 10
+        return tuple(
+            min(deckel, max(cfg.curriculum_schwelle_min,
+                            int(self.eval_best_run * f)))
+            for f in cfg.curriculum_schwellen_relativ
+        )
 
     def _reset_or_curriculum(self, i: int, game: SnakeGame) -> None:
         """Setzt ein TRAININGS-Spiel zurueck -- mit `curriculum_anteil`
@@ -700,6 +777,11 @@ class MultiGameTrainer:
         #    gebliebenen Zufallszug sterben.
         progress = min(1.0, self.total_steps / max(1, cfg.eps_decay_steps))
         self.epsilon = cfg.eps_start + (self.eps_end_active - cfg.eps_start) * progress
+        # Noisy Nets (AUSBAUPLAN C): die Erkundung sitzt im Netz selbst,
+        # der Epsilon-Wuerfel ist KOMPLETT aus (act_batch ignoriert ihn dann
+        # ohnehin -- hier zusaetzlich auf 0, damit Anzeige/CSV ehrlich sind).
+        if getattr(cfg, "noisy", False):
+            self.epsilon = 0.0
 
         # 9) Faellige Pruefung? (kostet kurz Zeit, liefert den ehrlichen Wert)
         if self.total_episodes >= self._next_eval_at and len(self.buffer) >= cfg.min_buffer:
@@ -792,6 +874,15 @@ class MultiGameTrainer:
         for g in games:
             g.reset()
 
+        # PFLICHT seit Noisy Nets (AUSBAUPLAN C): das Policy-Netz steht im
+        # Training dauerhaft auf train() -- mit Noisy-Schichten wuerde die
+        # Pruefung dann MIT Rauschen spielen und waere kein ehrlicher Wert
+        # mehr. eval() rechnet nur mit den Mittelwerten (deterministisch);
+        # nach der Messung geht es zurueck in den Trainingsmodus. Fuer die
+        # klassischen Schichten aendert eval()/train() nichts -- die Klammer
+        # ist also fuer alle Varianten korrekt.
+        self.agent.policy_net.eval()
+
         states = np.stack([self.perceive(g) for g in games])
         alive = [True] * len(games)
         scores = [0] * len(games)
@@ -803,8 +894,10 @@ class MultiGameTrainer:
         # ob das Netz sich systematisch ueber- oder unterschaetzt.
         import torch
         with torch.no_grad():
+            # q_values() statt forward(): liefert fuer ALLE Netz-Varianten
+            # (klassisch/dueling/distributional) einheitlich (batch, 3).
             q_start = (
-                self.agent.policy_net(
+                self.agent.policy_net.q_values(
                     torch.from_numpy(np.ascontiguousarray(states, dtype=np.float32))
                     .to(self.agent.device)
                 )
@@ -822,8 +915,10 @@ class MultiGameTrainer:
 
         # Endspiel-Curriculum (TRAININGSPLAN.md 2.2): waehrend der Pruefung
         # merken wir uns pro Partie die Stellung, sobald sie zum ERSTEN Mal
-        # Laenge 40/50/60 erreicht -- nachher wird nur die Sammlung der
+        # eine der Schwellen-Laengen erreicht (fest 40/50/60 oder mitwachsend,
+        # siehe _curriculum_schwellen) -- nachher wird nur die Sammlung der
         # BESTEN Pruefpartie behalten (siehe unten), der Rest verworfen.
+        schwellen = self._curriculum_schwellen()
         curriculum_hits: list[dict[int, dict]] = [{} for _ in games]
         next_target = [0] * len(games)
 
@@ -835,14 +930,15 @@ class MultiGameTrainer:
                 game = games[i]
                 result = game.step_action(Action(int(actions[slot])))
 
-                while (next_target[i] < len(_CURRICULUM_LENGTHS)
-                       and game.length >= _CURRICULUM_LENGTHS[next_target[i]]):
-                    threshold = _CURRICULUM_LENGTHS[next_target[i]]
+                while (next_target[i] < len(schwellen)
+                       and game.length >= schwellen[next_target[i]]):
+                    threshold = schwellen[next_target[i]]
                     curriculum_hits[i][threshold] = {
                         "snake": list(game.snake),
                         "fruits": set(game.fruits),
                         "direction": game.direction,
                         "steps_since_fruit": game.steps_since_fruit,
+                        "laenge": game.length,   # rein informativ (Report)
                     }
                     next_target[i] += 1
 
@@ -859,6 +955,9 @@ class MultiGameTrainer:
         for i, a in enumerate(alive):
             if a:
                 scores[i] = games[i].score
+
+        # Messung vorbei -> zurueck in den Trainingsmodus (siehe eval() oben).
+        self.agent.policy_net.train()
 
         # Nur von der BESTEN Pruefpartie dieser Pruefung Stellungen behalten
         # (nicht von jeder -- sonst wuerde auch Glueck/Mittelmass einsickern).

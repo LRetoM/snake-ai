@@ -1,0 +1,2 @@
+zeit,durchlauf,seed,score,zuege_pro_s,run_id,config
+20:44:31,1,11,5.6,11117.7,dqn-20260725-204424,"{""perception"": ""rich_grid7""}"

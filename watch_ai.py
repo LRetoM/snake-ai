@@ -33,7 +33,7 @@ from game.config import (
 )
 from game.renderer import Renderer
 from game.snake_game import Action, SnakeGame
-from ai.torch_bridge import SnakeNet
+from ai.torch_bridge import SnakeConvNet, SnakeNet
 from ai.perception import get_perception
 
 FPS = 60
@@ -114,9 +114,29 @@ def load_champion(path: str, train_cmd: str = "train_evolution.py") -> tuple[Sna
     # Aeltere DQN-Checkpoints (von vor der ReLU-Option) und Neuroevolution
     # kennen "activation" nicht -- fuer beide war es immer "tanh".
     activation = checkpoint.get("activation", "tanh")
-    net = SnakeNet(hidden=checkpoint["hidden"], input_size=input_size, activation=activation)
+    # Architektur-Schalter (AUSBAUPLAN.md): fehlen die Felder (aeltere
+    # Checkpoints), gelten die alten Defaults -- das Netz wird exakt so
+    # gebaut, wie der Champion trainiert wurde.
+    dueling = checkpoint.get("dueling", False)
+    noisy = checkpoint.get("noisy", False)
+    quantile = (int(checkpoint.get("quantile_anzahl", 32))
+                if checkpoint.get("distributional", False) else 0)
+    if checkpoint.get("network", "mlp") == "cnn":
+        net = SnakeConvNet(checkpoint.get("grid_cols", 20),
+                           checkpoint.get("grid_rows", 20),
+                           activation=activation, dueling=dueling,
+                           noisy=noisy, quantile=quantile,
+                           kanaele=tuple(checkpoint.get("cnn_kanaele", (16, 32))),
+                           pool=checkpoint.get("cnn_pool", 6))
+    else:
+        net = SnakeNet(hidden=checkpoint["hidden"], input_size=input_size,
+                       activation=activation, dueling=dueling, noisy=noisy,
+                       quantile=quantile)
     net.load_state_dict(checkpoint["state_dict"])
-    net.eval()  # nur Inferenz -- kein Training, keine Gradienten noetig
+    # eval() ist hier doppelt wichtig: (a) nur Inferenz, (b) bei Noisy Nets
+    # rechnet eval() rauschfrei mit den Mittelwerten -- man sieht also das
+    # ECHTE Koennen, nicht das Erkundungs-Zappeln aus dem Training.
+    net.eval()
     return net, checkpoint
 
 
@@ -273,7 +293,11 @@ class WatchApp:
             # den Bildschirm sieht, nicht den Code.
             observation = self.perceive(self.game)
             with torch.no_grad():
-                output = self.net(torch.from_numpy(observation))
+                # q_values() mit Batch-Dimension: einheitliche Schnittstelle
+                # fuer alle Netz-Varianten (klassisch/dueling/distributional
+                # /CNN) -- liefert immer (1, 3).
+                output = self.net.q_values(
+                    torch.from_numpy(observation).unsqueeze(0))[0]
             action = Action(int(torch.argmax(output).item()))
 
             result = self.game.step_action(action)

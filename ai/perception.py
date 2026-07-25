@@ -555,11 +555,87 @@ def mirror_perception(name: str, vector: np.ndarray) -> np.ndarray | None:
     return vector[perm] * sign
 
 
-# Wahrnehmungen, deren Eingangsgroesse von der Brettgroesse abhaengt (aktuell
-# nur "full_board") -- lassen sich nicht wie oben einmalig beim Modul-Import
-# vorberechnen. get_perception() braucht fuer sie zusaetzlich cols/rows.
+# =========================================================================== #
+# CNN-WAHRNEHMUNG ("cnn_board") -- das ganze Brett als Bild (AUSBAUPLAN D)
+# =========================================================================== #
+# Fuer das Faltungs-Netz (ai/torch_bridge.SnakeConvNet): drei ROHE Kanaele
+# (eigener Koerper inkl. Kopf / nur Kopf / Fruechte, je Zelle 0/1) plus 6
+# Skalare. Weiterhin reine Wahrnehmung -- KEIN Flood-Fill, KEIN berechneter
+# "sicherer Weg"-Kanal (Leitplanke). Der Vektor bleibt FLACH, damit
+# ReplayBuffer/n-Schritt-Ketten/Spiegelung unveraendert funktionieren; erst
+# das Netz formt ihn zu (3, rows, cols) um.
+#
+# Layout (fest, dokumentiert -- das Netz verlaesst sich exakt darauf):
+#   [0-3] Blickrichtung one-hot (oben/rechts/unten/links)
+#   [4]   Laenge (0..1, anteilig am Feld)
+#   [5]   Hunger (0..1, bei ~500 gedeckelt)
+#   [6 .. 6+cells)          Kanal 0: Koerper inkl. Kopf (zeilenweise, y dann x)
+#   [6+cells .. 6+2*cells)  Kanal 1: nur Kopf
+#   [6+2*cells .. 6+3*cells) Kanal 2: Fruechte
+CNN_SKALARE = 6
+CNN_KANAELE = 3
+
+
+def make_cnn_perception(cols: int, rows: int):
+    """(Funktion, Groesse, Labels) fuer die CNN-Brett-Wahrnehmung -- passend
+    zum BOARD_DEPENDENT_PERCEPTIONS-Format."""
+    cells = cols * rows
+    size = CNN_SKALARE + CNN_KANAELE * cells
+    labels = (
+        ["Richtung: oben", "Richtung: rechts", "Richtung: unten",
+         "Richtung: links", "Laenge", "Hunger"]
+        + [f"K{k} ({x},{y})" for k in range(CNN_KANAELE)
+           for y in range(rows) for x in range(cols)]
+    )
+
+    def perceive_cnn(game: SnakeGame) -> np.ndarray:
+        direction = game.direction
+        out = np.zeros(size, dtype=np.float32)
+        out[0] = 1.0 if direction == Direction.UP else 0.0
+        out[1] = 1.0 if direction == Direction.RIGHT else 0.0
+        out[2] = 1.0 if direction == Direction.DOWN else 0.0
+        out[3] = 1.0 if direction == Direction.LEFT else 0.0
+        out[4] = game.length / float(cells)
+        out[5] = min(1.0, game.steps_since_fruit / 500.0)
+        for (x, y) in game.occupied:
+            out[CNN_SKALARE + y * cols + x] = 1.0
+        hx, hy = game.head
+        out[CNN_SKALARE + cells + hy * cols + hx] = 1.0
+        for (x, y) in game.fruits:
+            out[CNN_SKALARE + 2 * cells + y * cols + x] = 1.0
+        return out
+
+    return perceive_cnn, size, labels
+
+
+def make_cnn_mirror(cols: int, rows: int) -> tuple[np.ndarray, np.ndarray]:
+    """Links-rechts-Spiegelung fuer "cnn_board" (Permutation + Vorzeichen).
+
+    Anders als bei "full_board" ist das hier MOEGLICH: der Kopf steht als
+    eigener Kanal im Bild (keine normierte Koordinate, die eine Verschiebung
+    braeuchte). Spiegeln heisst nur: in jedem Kanal jede Zeile umdrehen
+    (x -> cols-1-x) und in den Skalaren rechts<->links tauschen. Wird vom
+    Trainer zur Laufzeit erzeugt (brettabhaengig, kann also nicht statisch
+    in MIRROR_MAPS stehen) und an make_buffer durchgereicht.
+    """
+    cells = cols * rows
+    size = CNN_SKALARE + CNN_KANAELE * cells
+    perm = np.arange(size, dtype=np.int64)
+    perm[0:4] = [0, 3, 2, 1]   # oben, links<-rechts, unten, rechts<-links
+    for k in range(CNN_KANAELE):
+        base = CNN_SKALARE + k * cells
+        for y in range(rows):
+            row = base + y * cols
+            perm[row:row + cols] = np.arange(row + cols - 1, row - 1, -1)
+    return perm, np.ones(size, dtype=np.float32)
+
+
+# Wahrnehmungen, deren Eingangsgroesse von der Brettgroesse abhaengt --
+# lassen sich nicht wie oben einmalig beim Modul-Import vorberechnen.
+# get_perception() braucht fuer sie zusaetzlich cols/rows.
 BOARD_DEPENDENT_PERCEPTIONS = {
     "full_board": make_full_board_perception,
+    "cnn_board": make_cnn_perception,
 }
 
 

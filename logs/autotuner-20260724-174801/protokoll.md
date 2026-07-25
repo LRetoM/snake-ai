@@ -318,3 +318,17 @@ Gestartet: 2026-07-24 17:48:01
 - 19:23 [D4] Kandidat #150: gamma -> 0.95 (Bestmarke 144.70)
 - 19:33     Ergebnis: 115.50
 - 19:33 [D4] Kandidat #151: gamma -> 0.97 (Bestmarke 144.70)
+- 19:43     Ergebnis: 121.10
+- 19:43 [D4] Kandidat #152: hidden -> (128, 128) (Bestmarke 144.70)
+- 19:53     Ergebnis: 147.35
+- 19:53 [D4] Kandidat #153: hidden -> (256, 256) (Bestmarke 144.70)
+- 20:03     Ergebnis: 138.15
+- 20:03 [D4] Kandidat #154: hidden -> (512, 256) (Bestmarke 144.70)
+- 20:13     Ergebnis: 146.80
+- 20:13 [D4] Kandidat #155: balance_anteil -> 0.0 (Bestmarke 144.70)
+- 20:23     Ergebnis: 136.45
+- 20:23 [D4] Kandidat #156: balance_anteil -> 0.5 (Bestmarke 144.70)
+- 20:33     Ergebnis: 139.05
+- 20:33 [D4] Kandidat #157: curriculum_anteil -> 0.0 (Bestmarke 144.70)
+- 20:40     Ergebnis: 125.40
+- 20:40 FERTIG (per Strg+C beendet). Beste Config Score 144.70.

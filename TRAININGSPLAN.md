@@ -228,6 +228,63 @@ gleiches Zeitbudget, identische Basis (rich_grid7, Standard-Defaults):
 Danach datenbasiert entscheiden; bleibt Selbstkollision in den hohen
 Eimern trotz allem hart, ist die Wahrnehmung die Grenze → Phase 4 (CNN).
 
+### Runde 6 (2026-07-25) — AUSBAUPLAN Phasen A-E komplett umgesetzt
+
+Alle fuenf geplanten Netz-/Trainings-Upgrades sind gebaut, getestet und
+**standardmaessig AUS** (Opt-in per `--override` oder Menue-Zeile). Ohne
+Schalter aendert sich NICHTS am bisherigen Verhalten; der vorhandene
+17x15-Champion laedt und spielt unveraendert (explizit getestet).
+
+- **A `curriculum_mitwachsend`**: Snapshot-Schwellen sind nicht mehr fest
+  bei 40/50/60, sondern Anteile (50/65/80%) des LAUF-Bestwerts, mit
+  Untergrenze 40 und Deckel `cols*rows-10` -- der Bot uebt an seiner
+  AKTUELLEN Grenze. Report zeigt jetzt die Vorrats-Laengen (min/median/max).
+- **B `dueling`**: getrennte Value-/Advantage-Koepfe (Q = V + A - mean(A)),
+  in `SnakeNet` UND `SnakeConvNet`.
+- **C `noisy`**: Noisy Nets (Factorised Gaussian) -- Erkundung sitzt als
+  lernbares Rauschen in den Gewichten, der Epsilon-Wuerfel entfaellt
+  komplett (`epsilon` wird fest 0). WICHTIG dabei: `run_evaluation` klammert
+  die Messung jetzt in `policy_net.eval()`/`.train()` -- sonst wuerde die
+  Pruefung MIT Rauschen spielen und waere kein ehrlicher Wert mehr.
+- **D `network="cnn"` + `perception="cnn_board"`**: neue CNN-Wahrnehmung
+  (3 rohe Kanaele Koerper/Kopf/Frucht + 6 Skalare, flacher Vektor -> Netz
+  formt intern um, damit Puffer/n-Schritt/Spiegelung unveraendert laufen)
+  und `SnakeConvNet` mit adaptivem Pooling (brettgroessen-tolerant ->
+  Klein-Feld-Curriculum mit Gewichts-Transfer). Anders als `full_board`
+  hat diese Wahrnehmung eine echte SPIEGELUNG (`make_cnn_mirror`), weil
+  der Kopf als Kanal statt als Koordinate kodiert ist. Trainer erzwingt
+  die Kopplung Netz<->Wahrnehmung mit klarer Fehlermeldung.
+- **E `distributional` (QR-DQN)**: das Netz lernt je Aktion
+  `quantile_anzahl` Stuetzstellen der Ergebnis-VERTEILUNG statt nur den
+  Mittelwert (Quantile-Huber-Loss). Neue einheitliche Schnittstelle
+  `q_values()` an beiden Netzklassen liefert IMMER (batch, 3) -- dadurch
+  bleiben act_batch/Q-Kalibrierung/watch_ai fuer alle Varianten identisch.
+
+**Alle Checkpoint-Pfade sind wasserdicht**: neue Felder (`network`,
+`dueling`, `noisy`, `distributional`, `quantile_anzahl`, `cnn_kanaele`,
+`cnn_pool`) werden gespeichert; fehlen sie (aeltere Bots), gelten die alten
+Defaults; ein MISMATCH beim `--weiter` wird mit klarer Meldung abgelehnt
+statt still falsch geladen. `watch_ai.py` baut das Netz exakt aus diesen
+Feldern nach.
+
+**Phase D braucht einen anderen MASSSTAB (nicht: ist schlechter)**: CNN ist
+auf der CPU ~60x langsamer pro Zug als das MLP (~125 gegen ~7400 Zuege/s),
+praktisch komplett im Lernschritt. Das ist KEIN Ausschlusskriterium -- Ziel
+ist 100% Feldfuellung, nicht "bester Score pro Minute"; ein CNN darf gern
+langsam sein, wenn es pro ZUG klueger lernt. Nur der Vergleich muss passen:
+- **NEU `--ticks N`** in train_dqn.py: Erfahrungs-Budget statt Zeit-Budget,
+  beantwortet die faire Frage "wer lernt mehr pro Zug?". `--headless`
+  bleibt dabei als Notbremse aktiv.
+- `cnn_kanaele`/`cnn_pool` konfigurierbar (Defaults schlank: 16/32, Pool 6);
+  fuer mehr Wanduhr-Tempo zusaetzlich `batch_size` runter / `train_every` hoch.
+Phase D ist deshalb NICHT im Standard-Suchraum des Auto-Tuners (der misst
+nach Wanduhr und wuerde sie systematisch benachteiligen) -- sie gehoert in
+einen eigenen `--ticks`-Vergleich. Die anderen vier Schalter
+(`curriculum_mitwachsend`, `dueling`, `noisy`, `distributional`) SIND im
+Tuner-Suchraum und werden dort fair mitgetestet.
+
+Details, Abnahmetests und die A/B-Empfehlungen je Phase: `AUSBAUPLAN.md`.
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,

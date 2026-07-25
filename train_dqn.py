@@ -122,7 +122,8 @@ def run_headless(minutes: float, resume: bool, brett: str | None = None,
                   wahrnehmung: str | None = None, seed: int | None = None,
                   curriculum: float | None = None,
                   pfadfokus: float | None = None,
-                  overrides: list[str] | None = None) -> None:
+                  overrides: list[str] | None = None,
+                  ticks: int | None = None) -> None:
     """Trainiert ohne jede Grafik und meldet den Fortschritt in der Konsole."""
     from ai.dqn.trainer import MultiGameTrainer, load_champion_config
 
@@ -191,8 +192,21 @@ def run_headless(minutes: float, resume: bool, brett: str | None = None,
               "nicht vergleichbar).")
     elif resume_path:
         print(f"Weitertrainiert auf: {resume_path}  (Einstellungen vom Champion uebernommen)")
-    print(f"Laeuft {minutes:g} Minuten. Abbrechen mit Strg+C.\n")
+    if ticks:
+        print(f"Laeuft {ticks:,} Ticks (Erfahrungs-Budget statt Zeit-Budget). "
+              "Abbrechen mit Strg+C.\n".replace(",", "."))
+    else:
+        print(f"Laeuft {minutes:g} Minuten. Abbrechen mit Strg+C.\n")
 
+    # Zwei moegliche Budgets:
+    #  - Zeit (Standard): fair, wenn es um "was schafft der Bot pro STUNDE"
+    #    geht -- so misst der Auto-Tuner.
+    #  - Ticks (--ticks): fair, wenn es um "wer lernt mehr pro ZUG" geht.
+    #    Genau das braucht man, um ein langsameres, aber klueger lernendes
+    #    Netz (z.B. CNN) ehrlich gegen ein schnelles MLP zu vergleichen --
+    #    nach Wanduhr wuerde das langsamere immer verlieren, egal wie gut
+    #    es spielt. Beide Budgets koennen kombiniert werden (was zuerst
+    #    erreicht wird, beendet den Lauf -- praktisch als Notbremse).
     t_end = time.perf_counter() + minutes * 60
     next_console_print = time.perf_counter() + 30
     last_moves, last_t = 0, time.perf_counter()
@@ -202,7 +216,8 @@ def run_headless(minutes: float, resume: bool, brett: str | None = None,
     # hinterher nichts mehr auswerten kann.
     try:
         try:
-            while time.perf_counter() < t_end:
+            while (time.perf_counter() < t_end
+                   and (not ticks or trainer.total_steps < ticks)):
                 for _ in range(500):
                     trainer.step()
                 now = time.perf_counter()
@@ -215,7 +230,10 @@ def run_headless(minutes: float, resume: bool, brett: str | None = None,
                     # Lauf-Bestwert anzeigen, NICHT die Champion-Schutzschwelle
                     # der Datei -- die stammt evtl. von einem ganz anderen Lauf
                     # und hat hier monatelang faelschlich "best 87.2" angezeigt.
+                    fortschritt = (f"{100 * s.total_steps / ticks:3.0f}%  "
+                                   if ticks else "")
                     print(f"{int(s.elapsed) // 60:3d}:{int(s.elapsed) % 60:02d}  "
+                          f"{fortschritt}"
                           f"Ep {s.total_episodes:6d}  "
                           f"Pruefung {pruefung}  (Lauf-best {s.eval_best_run:5.1f})  "
                           f"Training Ø {s.mean_score:5.1f}  "
@@ -273,6 +291,15 @@ def main() -> None:
                              "Blendet automatisch Richtung 0 aus, sobald das "
                              "Lauf-Niveau steigt -- 'erst sicher, dann "
                              "schnell'. Nur --headless.")
+    parser.add_argument("--ticks", type=int, metavar="N",
+                        help="Erfahrungs-Budget statt Zeit-Budget: stoppt nach "
+                             "N Trainings-Ticks (ein Tick = alle Spiele je 1 "
+                             "Zug). Damit lassen sich unterschiedlich SCHNELLE "
+                             "Netze fair vergleichen ('wer lernt mehr pro "
+                             "Zug?') -- nach Wanduhr wuerde ein langsameres, "
+                             "aber klueger lernendes Netz (z.B. CNN) immer "
+                             "verlieren. --headless bleibt als Notbremse "
+                             "aktiv. Nur --headless.")
     parser.add_argument("--override", action="append", metavar="FELD=WERT",
                         help="beliebiges DQNConfig-Feld fuer diesen Lauf "
                              "setzen, z.B. --override gamma=0.99 --override "
@@ -283,7 +310,8 @@ def main() -> None:
 
     if args.headless:
         run_headless(args.headless, args.weiter, args.brett, args.wahrnehmung,
-                     args.seed, args.curriculum, args.pfadfokus, args.override)
+                     args.seed, args.curriculum, args.pfadfokus, args.override,
+                     args.ticks)
     elif args.brett:
         raise SystemExit("--brett wird nur mit --headless unterstuetzt -- "
                           "im Fenster die Menue-Zeile 'Brettgroesse' benutzen.")
@@ -291,9 +319,9 @@ def main() -> None:
         raise SystemExit("--wahrnehmung wird nur mit --headless unterstuetzt -- "
                           "im Fenster die Menue-Zeile 'Wahrnehmung' benutzen.")
     elif (args.seed is not None or args.curriculum is not None
-          or args.pfadfokus is not None or args.override):
-        raise SystemExit("--seed/--curriculum/--pfadfokus/--override werden "
-                          "nur mit --headless unterstuetzt.")
+          or args.pfadfokus is not None or args.override or args.ticks):
+        raise SystemExit("--seed/--curriculum/--pfadfokus/--override/--ticks "
+                          "werden nur mit --headless unterstuetzt.")
     else:
         from dashboard.dqn_view import main as run_dashboard
         run_dashboard(resume=args.weiter)

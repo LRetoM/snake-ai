@@ -1088,6 +1088,64 @@
       "parameter": "gamma",
       "neuer_wert": 0.95,
       "mittel": 115.5
+    },
+    {
+      "nr": 151,
+      "durchlauf": 4,
+      "parameter": "gamma",
+      "neuer_wert": 0.97,
+      "mittel": 121.1
+    },
+    {
+      "nr": 152,
+      "durchlauf": 4,
+      "parameter": "hidden",
+      "neuer_wert": [
+        128,
+        128
+      ],
+      "mittel": 147.35
+    },
+    {
+      "nr": 153,
+      "durchlauf": 4,
+      "parameter": "hidden",
+      "neuer_wert": [
+        256,
+        256
+      ],
+      "mittel": 138.15
+    },
+    {
+      "nr": 154,
+      "durchlauf": 4,
+      "parameter": "hidden",
+      "neuer_wert": [
+        512,
+        256
+      ],
+      "mittel": 146.8
+    },
+    {
+      "nr": 155,
+      "durchlauf": 4,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 136.45
+    },
+    {
+      "nr": 156,
+      "durchlauf": 4,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 139.05
+    },
+    {
+      "nr": 157,
+      "durchlauf": 4,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 125.4
     }
   ],
   "verlauf": [
@@ -1105,18 +1163,14 @@
   ],
   "durchlauf": 4,
   "pass_queue": [
-    "gamma",
-    "hidden",
-    "balance_anteil",
-    "curriculum_anteil",
     "batch_size",
     "train_every",
     "eps_decay_steps"
   ],
   "pass_verbessert": false,
-  "kandidaten_gesamt": 150,
+  "kandidaten_gesamt": 157,
   "verbesserungen": 10,
-  "laeufe_gesamt": 154,
+  "laeufe_gesamt": 161,
   "seeds": 1,
   "minuten": 10.0,
   "_pass_seeds": [

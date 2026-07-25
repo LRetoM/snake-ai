@@ -1,0 +1,48 @@
+{
+  "best_overrides": {
+    "perception": "rich_grid7"
+  },
+  "best_score": 5.6,
+  "best_checkpoint": "/Users/lucamuller/Documents/snake-ai/logs/autotuner-20260725-204423/checkpoints/D1_basis.pt",
+  "historie": [],
+  "verlauf": [
+    "Basis (Durchlauf 1, Seed [11]): 5.60 [Gewichte: /Users/lucamuller/Documents/snake-ai/logs/autotuner-20260725-204423/checkpoints/D1_basis.pt]"
+  ],
+  "durchlauf": 1,
+  "pass_queue": [
+    "target_update",
+    "reward_step",
+    "distributional",
+    "curriculum_mitwachsend",
+    "noisy",
+    "num_games",
+    "dueling",
+    "pfad_fokus",
+    "spiegel_lernen",
+    "train_every",
+    "perception",
+    "prioritized",
+    "learning_rate",
+    "eps_decay_steps",
+    "gamma",
+    "fruit_count",
+    "curriculum_anteil",
+    "reward_death",
+    "pfad_fokus_bonus",
+    "balance_anteil",
+    "batch_size",
+    "eps_end",
+    "n_step",
+    "activation",
+    "hidden"
+  ],
+  "pass_verbessert": false,
+  "kandidaten_gesamt": 0,
+  "verbesserungen": 0,
+  "laeufe_gesamt": 1,
+  "seeds": 1,
+  "minuten": 10.0,
+  "_pass_seeds": [
+    11
+  ]
+}

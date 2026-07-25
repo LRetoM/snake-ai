@@ -489,13 +489,21 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
 
 # =========================================================================== #
-def make_buffer(cfg, state_size: int, rng: np.random.Generator | None = None):
+def make_buffer(cfg, state_size: int, rng: np.random.Generator | None = None,
+                mirror_entry: tuple[np.ndarray, np.ndarray] | None = None):
     """Baut den in der Config gewaehlten Puffer-Typ.
 
     Laengen-Balance UND Symmetrie-Spiegelung gelten bewusst NUR fuer den
     normalen Puffer -- der priorisierte hat sein eigenes, unabhaengig
     gemessenes Auswahlverfahren (siehe TRAININGSPLAN.md 2.1/2.8: ein Retest
     kommt erst NACH der Laengen-Balance, nicht gleichzeitig damit).
+
+    `mirror_entry`: explizite (Permutation, Vorzeichen)-Spiegelung fuer
+    BRETTABHAENGIGE Wahrnehmungen (z.B. "cnn_board", ai/perception.py
+    make_cnn_mirror) -- die koennen nicht statisch in MIRROR_MAPS stehen,
+    weil ihre Groesse erst mit cols/rows feststeht. Der Trainer erzeugt den
+    Eintrag zur Laufzeit und reicht ihn hier durch. None = wie bisher aus
+    der statischen Registry nachschlagen.
     """
     if getattr(cfg, "prioritized", False):
         return PrioritizedReplayBuffer(
@@ -506,7 +514,8 @@ def make_buffer(cfg, state_size: int, rng: np.random.Generator | None = None):
     mirror_perm = mirror_sign = None
     mirror_fraction = 0.0
     if getattr(cfg, "spiegel_lernen", False):
-        entry = MIRROR_MAPS.get(cfg.perception)
+        entry = mirror_entry if mirror_entry is not None \
+            else MIRROR_MAPS.get(cfg.perception)
         # entry ist None fuer Wahrnehmungen ohne definierte Spiegelung
         # (aktuell nur "full_board") -- dann bleibt Spiegeln einfach aus.
         if entry is not None:

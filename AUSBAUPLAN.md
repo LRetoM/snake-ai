@@ -2,9 +2,78 @@
 
 Stand: 2026-07-25. Umsetzungs-Spezifikation für die fünf Netz-/Trainings-
 Upgrades aus dem Chat (mitwachsendes Curriculum, Dueling, Noisy Nets, CNN,
-Distributional RL). **Noch NICHTS davon ist umgesetzt** — dieses Dokument
-ist der exakte Bauplan, dem später Phase für Phase gefolgt wird
-("setze Phase B um" reicht dann als Auftrag).
+Distributional RL).
+
+## ✅ UMSETZUNGSSTAND: Phasen A-E sind ALLE im Code (2026-07-25)
+
+Alle fünf Phasen sind gebaut, per Abnahmetests belegt und **standardmäßig
+AUS** — jeder Schalter ist Opt-in (`--override dueling=True` bzw. Menü-
+Zeile im Dashboard). Ohne Schalter verhält sich alles exakt wie vorher;
+der vorhandene 17×15-Champion lädt und spielt unverändert (getestet).
+
+| Phase | Schalter | Status |
+|---|---|---|
+| A Curriculum wächst mit | `curriculum_mitwachsend=True` | ✅ getestet |
+| B Dueling-Kopf | `dueling=True` | ✅ getestet |
+| C Noisy Nets | `noisy=True` | ✅ getestet |
+| D CNN | `network="cnn"` + `perception="cnn_board"` | ✅ gebaut, Durchsatz-Problem (s.u.) |
+| E QR-DQN | `distributional=True` (+`quantile_anzahl`) | ✅ getestet |
+
+**Bestandene Abnahmetests** (im Chat ausgeführt): Schwellen-Arithmetik
+(0→40/40/40, 150→75/97/120, Deckel greift); Dueling-Zerlegung mathematisch
+exakt (mean(Q)==V, Abweichung 7e-9); Genom-Roundtrip der Neuroevolution
+unverändert + harte Ablehnung bei dueling/noisy/quantile; Noisy rauscht im
+train()-Modus und ist im eval()-Modus deterministisch; CNN-Kanalsummen
+korrekt (Körper==Länge, Kopf==1, Frucht==Anzahl) auf 9×9/13×11/17×15;
+CNN-Spiegeltest über 50 Zufallsstellungen exakt (atol 1e-6);
+Brettgrößen-Toleranz (9×9-Gewichte laden strict auf 17×15); QR-DQN lernt
+auf synthetisch bimodaler Belohnung wirklich beide Ausprägungen
+(−9.98…+9.98, Mittel −0.05) während klassisches DQN auf den Mittelwert
+kollabiert; 8 Trainer-Kombinationen laufen end-to-end ohne Loss-Ausreißer;
+Checkpoint-Roundtrip + Mismatch-Schutz + watch_ai-Ladepfad für jede
+Kombination; alter Champion (ohne neue Felder) lädt als mlp/False/False/0.
+
+**Phase D (CNN) — braucht einen ANDEREN Vergleichsmaßstab**:
+Faltung ist auf der CPU teuer: gemessen ~125 Züge/s gegen ~7400 beim MLP
+(erste Fassung 32/64 Kanäle, 11×11 Pool; 126 von 128 ms allein im
+Lernschritt bei Batch 512). Wichtig richtig einzuordnen: **langsamer ist
+kein Ausschlusskriterium** — das Ziel ist 100% Feldfüllung, nicht "bester
+Score pro Minute". Ein CNN darf gern 60× langsamer sein, wenn es dafür
+pro Zug klüger lernt und höher plateaut.
+
+Das Problem ist nur der MASSSTAB: der Auto-Tuner vergleicht nach
+Wanduhr-Zeit, da verliert alles Langsame automatisch — unabhängig von der
+Spielstärke. Deshalb zwei Konsequenzen:
+1. **Neu: `--ticks N`** in `train_dqn.py` — Erfahrungs-Budget statt
+   Zeit-Budget. Damit beantwortet man die faire Frage "wer lernt mehr pro
+   ZUG?" (gleiche Anzahl Trainings-Ticks für beide Arme).
+   Beispiel-Vergleich:
+   `python train_dqn.py --headless 600 --ticks 300000 --seed 11` (MLP-Arm)
+   gegen denselben Befehl + `--override network="'cnn'" --override
+   perception="'cnn_board'"` — `--headless` dient dabei nur als Notbremse.
+2. Architektur konfigurierbar (`cnn_kanaele`, `cnn_pool`, Defaults jetzt
+   schlank: 16/32, Pool 6), zusätzlich `batch_size` runter (128) und/oder
+   `train_every` hoch (2-4) testen — dann wird das CNN auch nach Wanduhr
+   konkurrenzfähiger.
+
+Phase D ist bewusst **nicht** im Standard-Suchraum des Auto-Tuners (die
+anderen vier schon) — nicht weil sie schlechter wäre, sondern weil der
+Tuner sie mit seinem Zeit-Maßstab systematisch benachteiligen würde. Sie
+gehört in einen eigenen `--ticks`-Vergleich.
+Hinweis: die Durchsatz-Messung lief, während der Auto-Tuner arbeitete —
+die absoluten Zahlen sind also pessimistisch, das Verhältnis MLP:CNN ist
+aussagekräftig (beide gleich gemessen).
+
+**Nächster Schritt**: A/B je Schalter einzeln gegen die aktuelle
+Tuner-Bestconfig (2 Seeds, gleiches Budget), bzw. einfach den Auto-Tuner
+laufen lassen — `curriculum_mitwachsend`, `dueling`, `noisy` und
+`distributional` sind in `auto_tuner.SUCHRAUM` aufgenommen und werden
+dort automatisch fair mitgetestet. Für das CNN separat der
+`--ticks`-Vergleich oben.
+
+---
+
+Das Folgende ist der ursprüngliche Bauplan (Referenz für die Details).
 
 Basis-Messung beim Schreiben dieses Plans: Auto-Tuner-Bestmarke 146-152
 (≈58-61% Füllung im Schnitt, Prüfung ohne Zufall) mit

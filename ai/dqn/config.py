@@ -70,6 +70,41 @@ class DQNConfig:
     # (Pruefung 67, Champion 75.6 -- deutlich vor den reinen Code-Defaults,
     # die nur 58 erreichten). Mehr Kapazitaet fuer die reichere Wahrnehmung.
     hidden: tuple[int, ...] = (256, 128)
+    # ------------------------------------------------------------------ #
+    # Netz-Architektur-Schalter (AUSBAUPLAN.md, alle Default AUS = altes
+    # Verhalten; werden einzeln per A/B gemessen, bevor sie Default werden)
+    # ------------------------------------------------------------------ #
+    # "mlp" = klassisches Schichten-Netz (SnakeNet). "cnn" = Faltungs-Netz
+    # (SnakeConvNet), das das GANZE Brett als Bild sieht -- erfordert
+    # perception="cnn_board" (der Trainer prueft das mit klarer Meldung).
+    network: str = "mlp"
+    # CNN-Groesse. GEMESSEN (2026-07-25, M-Mac, 4 Threads): ein Faltungs-Netz
+    # ist auf der CPU pro Zug VIEL teurer als das MLP -- mit (32,64) Kanaelen
+    # und 11x11-Pooling nur ~125 Zuege/s gegen ~7400 beim MLP, davon 126 von
+    # 128 ms allein im Lernschritt (Batch 512). So koennte das CNN einen
+    # A/B-Vergleich bei gleicher WANDUHR-Zeit nie gewinnen, egal wie gut es
+    # pro Zug lernt. Deshalb schlankere Standardwerte + hier einstellbar,
+    # damit der Auto-Tuner die Balance aus Sichtqualitaet und Durchsatz
+    # selbst finden kann (zusammen mit batch_size/train_every).
+    cnn_kanaele: tuple[int, ...] = (16, 32)
+    cnn_pool: int = 6          # adaptives Pooling auf pool x pool (brettgroessen-tolerant)
+    # Dueling-Kopf (Phase B): trennt "wie gut ist die Lage" (Value) von
+    # "wie viel besser ist Aktion X als der Schnitt" (Advantage) --
+    # Q = V + A - mean(A). Stark dort, wo genau EIN Zug ueberlebt.
+    dueling: bool = False
+    # Noisy Nets (Phase C): Erkundung als lernbares Rauschen IN den
+    # Gewichten statt Epsilon-Wuerfel pro Zug. Bei True ist die komplette
+    # Epsilon-Mechanik wirkungslos (epsilon fest 0) -- kein einzelner
+    # Zufallszug toetet mehr eine lange Partie. Pruefungen sind automatisch
+    # rauschfrei (eval-Modus rechnet nur mit den Mittelwerten).
+    noisy: bool = False
+    # Verteilungs-Lernen QR-DQN (Phase E): das Netz lernt je Aktion
+    # `quantile_anzahl` Stuetzstellen der ERGEBNIS-VERTEILUNG statt nur den
+    # Mittelwert -- wichtig, wo derselbe Zug mal +50 und mal Tod bedeutet.
+    # Bewusst QR statt C51: C51 braucht feste Wertgrenzen, unsere Q-Werte
+    # wachsen aber staendig mit (im Tuner-Lauf von ~20 auf 150+).
+    distributional: bool = False
+    quantile_anzahl: int = 32
     # Aktivierungsfunktion in den versteckten Schichten. Die Neuroevolution
     # nutzt zwingend "tanh" (ihre Mutation/Crossover rechnet auf begrenzten
     # Gewichten). Fuers DQN ist "relu" die uebliche, bessere Wahl: tanh
@@ -152,6 +187,14 @@ class DQNConfig:
     # Pruefungen (run_evaluation) starten IMMER bei Laenge 3, damit der
     # Massstab rein bleibt. 0.0 = komplett abgeschaltet (altes Verhalten).
     curriculum_anteil: float = 0.25
+    # Mitwachsende Schwellen (AUSBAUPLAN Phase A): statt fest bei Laenge
+    # 40/50/60 werden Stellungen bei ANTEILEN des Lauf-Bestwerts gesichert
+    # (Bestwert 150 -> Schwellen 75/97/120) -- der Bot uebt dann immer an
+    # seiner AKTUELLEN Grenze, nicht an einer von gestern. Default AUS
+    # (= feste 40/50/60 wie bisher), bis eine A/B-Messung es belegt.
+    curriculum_mitwachsend: bool = False
+    curriculum_schwellen_relativ: tuple = (0.5, 0.65, 0.8)
+    curriculum_schwelle_min: int = 40   # Untergrenze, solange der Bot schwach ist
 
     # ------------------------------------------------------------------ #
     # Symmetrie-Verdopplung (TRAININGSPLAN.md 2.6)
