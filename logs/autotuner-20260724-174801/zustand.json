@@ -1,8 +1,16 @@
 {
   "best_overrides": {
-    "perception": "rich_grid9"
+    "perception": "rich_grid9",
+    "spiegel_lernen": false,
+    "fruit_count": 10,
+    "target_update": 500,
+    "curriculum_anteil": 1.0,
+    "n_step": 5,
+    "pfad_fokus": 0.7,
+    "gamma": 0.99,
+    "batch_size": 512
   },
-  "best_score": 67.75,
+  "best_score": 144.7,
   "historie": [
     {
       "nr": 1,
@@ -80,36 +88,909 @@
       "parameter": "learning_rate",
       "neuer_wert": 0.002,
       "mittel": 64.4
+    },
+    {
+      "nr": 12,
+      "durchlauf": 1,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.02,
+      "mittel": 66.3
+    },
+    {
+      "nr": 13,
+      "durchlauf": 1,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.1,
+      "mittel": 68.55
+    },
+    {
+      "nr": 14,
+      "durchlauf": 1,
+      "parameter": "gamma",
+      "neuer_wert": 0.95,
+      "mittel": 64.8
+    },
+    {
+      "nr": 15,
+      "durchlauf": 1,
+      "parameter": "gamma",
+      "neuer_wert": 0.99,
+      "mittel": 68.15
+    },
+    {
+      "nr": 16,
+      "durchlauf": 1,
+      "parameter": "spiegel_lernen",
+      "neuer_wert": false,
+      "mittel": 70.15
+    },
+    {
+      "nr": 17,
+      "durchlauf": 1,
+      "parameter": "fruit_count",
+      "neuer_wert": 1,
+      "mittel": 55.25
+    },
+    {
+      "nr": 18,
+      "durchlauf": 1,
+      "parameter": "fruit_count",
+      "neuer_wert": 5,
+      "mittel": 76.4
+    },
+    {
+      "nr": 19,
+      "durchlauf": 1,
+      "parameter": "fruit_count",
+      "neuer_wert": 10,
+      "mittel": 106.9
+    },
+    {
+      "nr": 20,
+      "durchlauf": 1,
+      "parameter": "target_update",
+      "neuer_wert": 500,
+      "mittel": 111.4
+    },
+    {
+      "nr": 21,
+      "durchlauf": 1,
+      "parameter": "target_update",
+      "neuer_wert": 2000,
+      "mittel": 113.15
+    },
+    {
+      "nr": 22,
+      "durchlauf": 1,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.25,
+      "mittel": 109.2
+    },
+    {
+      "nr": 23,
+      "durchlauf": 1,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.5,
+      "mittel": 104.7
+    },
+    {
+      "nr": 24,
+      "durchlauf": 1,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.7,
+      "mittel": 105.35
+    },
+    {
+      "nr": 25,
+      "durchlauf": 1,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 1.0,
+      "mittel": 104.5
+    },
+    {
+      "nr": 26,
+      "durchlauf": 1,
+      "parameter": "eps_decay_steps",
+      "neuer_wert": 40000,
+      "mittel": 110.25
+    },
+    {
+      "nr": 27,
+      "durchlauf": 1,
+      "parameter": "eps_decay_steps",
+      "neuer_wert": 150000,
+      "mittel": 90.95
+    },
+    {
+      "nr": 28,
+      "durchlauf": 1,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 87.95
+    },
+    {
+      "nr": 29,
+      "durchlauf": 1,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 105.7
+    },
+    {
+      "nr": 30,
+      "durchlauf": 1,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 1.0,
+      "mittel": 120.65
+    },
+    {
+      "nr": 31,
+      "durchlauf": 1,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 108.95
+    },
+    {
+      "nr": 32,
+      "durchlauf": 1,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 118.6
+    },
+    {
+      "nr": 33,
+      "durchlauf": 1,
+      "parameter": "batch_size",
+      "neuer_wert": 128,
+      "mittel": 116.8
+    },
+    {
+      "nr": 34,
+      "durchlauf": 1,
+      "parameter": "batch_size",
+      "neuer_wert": 512,
+      "mittel": 120.85
+    },
+    {
+      "nr": 35,
+      "durchlauf": 1,
+      "parameter": "eps_end",
+      "neuer_wert": 0.05,
+      "mittel": 115.9
+    },
+    {
+      "nr": 36,
+      "durchlauf": 1,
+      "parameter": "n_step",
+      "neuer_wert": 1,
+      "mittel": 118.55
+    },
+    {
+      "nr": 37,
+      "durchlauf": 1,
+      "parameter": "n_step",
+      "neuer_wert": 5,
+      "mittel": 123.1
+    },
+    {
+      "nr": 38,
+      "durchlauf": 1,
+      "parameter": "activation",
+      "neuer_wert": "tanh",
+      "mittel": 100.65
+    },
+    {
+      "nr": 39,
+      "durchlauf": 1,
+      "parameter": "hidden",
+      "neuer_wert": [
+        128,
+        128
+      ],
+      "mittel": 117.95
+    },
+    {
+      "nr": 40,
+      "durchlauf": 1,
+      "parameter": "hidden",
+      "neuer_wert": [
+        256,
+        256
+      ],
+      "mittel": 121.3
+    },
+    {
+      "nr": 41,
+      "durchlauf": 1,
+      "parameter": "hidden",
+      "neuer_wert": [
+        512,
+        256
+      ],
+      "mittel": 122.65
+    },
+    {
+      "nr": 42,
+      "durchlauf": 2,
+      "parameter": "target_update",
+      "neuer_wert": 500,
+      "mittel": 122.85
+    },
+    {
+      "nr": 43,
+      "durchlauf": 2,
+      "parameter": "target_update",
+      "neuer_wert": 1000,
+      "mittel": 122.7
+    },
+    {
+      "nr": 44,
+      "durchlauf": 2,
+      "parameter": "reward_step",
+      "neuer_wert": 0.0,
+      "mittel": 116.45
+    },
+    {
+      "nr": 45,
+      "durchlauf": 2,
+      "parameter": "eps_decay_steps",
+      "neuer_wert": 40000,
+      "mittel": 122.95
+    },
+    {
+      "nr": 46,
+      "durchlauf": 2,
+      "parameter": "eps_decay_steps",
+      "neuer_wert": 150000,
+      "mittel": 107.7
+    },
+    {
+      "nr": 47,
+      "durchlauf": 2,
+      "parameter": "eps_end",
+      "neuer_wert": 0.05,
+      "mittel": 118.95
+    },
+    {
+      "nr": 48,
+      "durchlauf": 2,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.02,
+      "mittel": 115.05
+    },
+    {
+      "nr": 49,
+      "durchlauf": 2,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.1,
+      "mittel": 121.75
+    },
+    {
+      "nr": 50,
+      "durchlauf": 2,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 116.85
+    },
+    {
+      "nr": 51,
+      "durchlauf": 2,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.25,
+      "mittel": 112.05
+    },
+    {
+      "nr": 52,
+      "durchlauf": 2,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 117.55
+    },
+    {
+      "nr": 53,
+      "durchlauf": 2,
+      "parameter": "spiegel_lernen",
+      "neuer_wert": true,
+      "mittel": 99.2
+    },
+    {
+      "nr": 54,
+      "durchlauf": 2,
+      "parameter": "fruit_count",
+      "neuer_wert": 1,
+      "mittel": 57.2
+    },
+    {
+      "nr": 55,
+      "durchlauf": 2,
+      "parameter": "fruit_count",
+      "neuer_wert": 3,
+      "mittel": 75.8
+    },
+    {
+      "nr": 56,
+      "durchlauf": 2,
+      "parameter": "fruit_count",
+      "neuer_wert": 5,
+      "mittel": 106.0
+    },
+    {
+      "nr": 57,
+      "durchlauf": 2,
+      "parameter": "activation",
+      "neuer_wert": "tanh",
+      "mittel": 100.1
+    },
+    {
+      "nr": 58,
+      "durchlauf": 2,
+      "parameter": "prioritized",
+      "neuer_wert": true,
+      "mittel": 113.25
+    },
+    {
+      "nr": 59,
+      "durchlauf": 2,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.0005,
+      "mittel": 123.9
+    },
+    {
+      "nr": 60,
+      "durchlauf": 2,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.002,
+      "mittel": 117.9
+    },
+    {
+      "nr": 61,
+      "durchlauf": 2,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.25,
+      "mittel": 125.25
+    },
+    {
+      "nr": 62,
+      "durchlauf": 2,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.5,
+      "mittel": 125.8
+    },
+    {
+      "nr": 63,
+      "durchlauf": 2,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.7,
+      "mittel": 132.35
+    },
+    {
+      "nr": 64,
+      "durchlauf": 2,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 1.0,
+      "mittel": 48.75
+    },
+    {
+      "nr": 65,
+      "durchlauf": 2,
+      "parameter": "batch_size",
+      "neuer_wert": 128,
+      "mittel": 128.5
+    },
+    {
+      "nr": 66,
+      "durchlauf": 2,
+      "parameter": "batch_size",
+      "neuer_wert": 512,
+      "mittel": 124.05
+    },
+    {
+      "nr": 67,
+      "durchlauf": 2,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 124.15
+    },
+    {
+      "nr": 68,
+      "durchlauf": 2,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 128.0
+    },
+    {
+      "nr": 69,
+      "durchlauf": 2,
+      "parameter": "hidden",
+      "neuer_wert": [
+        128,
+        128
+      ],
+      "mittel": 134.05
+    },
+    {
+      "nr": 70,
+      "durchlauf": 2,
+      "parameter": "hidden",
+      "neuer_wert": [
+        256,
+        256
+      ],
+      "mittel": 131.45
+    },
+    {
+      "nr": 71,
+      "durchlauf": 2,
+      "parameter": "hidden",
+      "neuer_wert": [
+        512,
+        256
+      ],
+      "mittel": 134.6
+    },
+    {
+      "nr": 72,
+      "durchlauf": 2,
+      "parameter": "train_every",
+      "neuer_wert": 2,
+      "mittel": 124.9
+    },
+    {
+      "nr": 73,
+      "durchlauf": 2,
+      "parameter": "num_games",
+      "neuer_wert": 8,
+      "mittel": 130.2
+    },
+    {
+      "nr": 74,
+      "durchlauf": 2,
+      "parameter": "num_games",
+      "neuer_wert": 24,
+      "mittel": 126.75
+    },
+    {
+      "nr": 75,
+      "durchlauf": 2,
+      "parameter": "perception",
+      "neuer_wert": "rich",
+      "mittel": 113.35
+    },
+    {
+      "nr": 76,
+      "durchlauf": 2,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid5",
+      "mittel": 118.35
+    },
+    {
+      "nr": 77,
+      "durchlauf": 2,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid7",
+      "mittel": 117.4
+    },
+    {
+      "nr": 78,
+      "durchlauf": 2,
+      "parameter": "reward_death",
+      "neuer_wert": -20.0,
+      "mittel": 123.9
+    },
+    {
+      "nr": 79,
+      "durchlauf": 2,
+      "parameter": "n_step",
+      "neuer_wert": 1,
+      "mittel": 109.95
+    },
+    {
+      "nr": 80,
+      "durchlauf": 2,
+      "parameter": "n_step",
+      "neuer_wert": 3,
+      "mittel": 124.1
+    },
+    {
+      "nr": 81,
+      "durchlauf": 2,
+      "parameter": "gamma",
+      "neuer_wert": 0.95,
+      "mittel": 111.3
+    },
+    {
+      "nr": 82,
+      "durchlauf": 2,
+      "parameter": "gamma",
+      "neuer_wert": 0.99,
+      "mittel": 136.65
+    },
+    {
+      "nr": 83,
+      "durchlauf": 3,
+      "parameter": "n_step",
+      "neuer_wert": 1,
+      "mittel": 114.05
+    },
+    {
+      "nr": 84,
+      "durchlauf": 3,
+      "parameter": "n_step",
+      "neuer_wert": 3,
+      "mittel": 134.2
+    },
+    {
+      "nr": 85,
+      "durchlauf": 3,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.02,
+      "mittel": 145.5
+    },
+    {
+      "nr": 86,
+      "durchlauf": 3,
+      "parameter": "pfad_fokus_bonus",
+      "neuer_wert": 0.1,
+      "mittel": 143.5
+    },
+    {
+      "nr": 87,
+      "durchlauf": 3,
+      "parameter": "fruit_count",
+      "neuer_wert": 1,
+      "mittel": 75.35
+    },
+    {
+      "nr": 88,
+      "durchlauf": 3,
+      "parameter": "fruit_count",
+      "neuer_wert": 3,
+      "mittel": 89.95
+    },
+    {
+      "nr": 89,
+      "durchlauf": 3,
+      "parameter": "fruit_count",
+      "neuer_wert": 5,
+      "mittel": 113.75
+    },
+    {
+      "nr": 90,
+      "durchlauf": 3,
+      "parameter": "eps_end",
+      "neuer_wert": 0.05,
+      "mittel": 141.1
+    },
+    {
+      "nr": 91,
+      "durchlauf": 3,
+      "parameter": "spiegel_lernen",
+      "neuer_wert": true,
+      "mittel": 111.45
+    },
+    {
+      "nr": 92,
+      "durchlauf": 3,
+      "parameter": "num_games",
+      "neuer_wert": 8,
+      "mittel": 136.5
+    },
+    {
+      "nr": 93,
+      "durchlauf": 3,
+      "parameter": "num_games",
+      "neuer_wert": 24,
+      "mittel": 136.9
+    },
+    {
+      "nr": 94,
+      "durchlauf": 3,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 136.05
+    },
+    {
+      "nr": 95,
+      "durchlauf": 3,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.25,
+      "mittel": 136.35
+    },
+    {
+      "nr": 96,
+      "durchlauf": 3,
+      "parameter": "curriculum_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 128.7
+    },
+    {
+      "nr": 97,
+      "durchlauf": 3,
+      "parameter": "batch_size",
+      "neuer_wert": 128,
+      "mittel": 131.55
+    },
+    {
+      "nr": 98,
+      "durchlauf": 3,
+      "parameter": "batch_size",
+      "neuer_wert": 512,
+      "mittel": 152.45
+    },
+    {
+      "nr": 99,
+      "durchlauf": 3,
+      "parameter": "reward_death",
+      "neuer_wert": -20.0,
+      "mittel": 135.25
+    },
+    {
+      "nr": 100,
+      "durchlauf": 3,
+      "parameter": "reward_step",
+      "neuer_wert": 0.0,
+      "mittel": 126.7
+    },
+    {
+      "nr": 101,
+      "durchlauf": 3,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.0005,
+      "mittel": 128.6
+    },
+    {
+      "nr": 102,
+      "durchlauf": 3,
+      "parameter": "learning_rate",
+      "neuer_wert": 0.002,
+      "mittel": 129.4
+    },
+    {
+      "nr": 103,
+      "durchlauf": 3,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.0,
+      "mittel": 140.85
+    },
+    {
+      "nr": 104,
+      "durchlauf": 3,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.25,
+      "mittel": 138.6
+    },
+    {
+      "nr": 105,
+      "durchlauf": 3,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.5,
+      "mittel": 130.25
+    },
+    {
+      "nr": 106,
+      "durchlauf": 3,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 1.0,
+      "mittel": 76.6
+    },
+    {
+      "nr": 107,
+      "durchlauf": 3,
+      "parameter": "gamma",
+      "neuer_wert": 0.95,
+      "mittel": 114.15
+    },
+    {
+      "nr": 108,
+      "durchlauf": 3,
+      "parameter": "gamma",
+      "neuer_wert": 0.97,
+      "mittel": 128.3
+    },
+    {
+      "nr": 109,
+      "durchlauf": 3,
+      "parameter": "train_every",
+      "neuer_wert": 2,
+      "mittel": 133.85
+    },
+    {
+      "nr": 110,
+      "durchlauf": 3,
+      "parameter": "target_update",
+      "neuer_wert": 1000,
+      "mittel": 138.7
+    },
+    {
+      "nr": 111,
+      "durchlauf": 3,
+      "parameter": "target_update",
+      "neuer_wert": 2000,
+      "mittel": 135.65
+    },
+    {
+      "nr": 112,
+      "durchlauf": 3,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.0,
+      "mittel": 139.3
+    },
+    {
+      "nr": 113,
+      "durchlauf": 3,
+      "parameter": "balance_anteil",
+      "neuer_wert": 0.5,
+      "mittel": 143.4
+    },
+    {
+      "nr": 114,
+      "durchlauf": 3,
+      "parameter": "perception",
+      "neuer_wert": "rich",
+      "mittel": 121.05
+    },
+    {
+      "nr": 115,
+      "durchlauf": 3,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid5",
+      "mittel": 127.85
+    },
+    {
+      "nr": 116,
+      "durchlauf": 3,
+      "parameter": "perception",
+      "neuer_wert": "rich_grid7",
+      "mittel": 128.5
+    },
+    {
+      "nr": 117,
+      "durchlauf": 3,
+      "parameter": "hidden",
+      "neuer_wert": [
+        128,
+        128
+      ],
+      "mittel": 133.3
+    },
+    {
+      "nr": 118,
+      "durchlauf": 3,
+      "parameter": "hidden",
+      "neuer_wert": [
+        256,
+        256
+      ],
+      "mittel": 144.3
+    },
+    {
+      "nr": 119,
+      "durchlauf": 3,
+      "parameter": "hidden",
+      "neuer_wert": [
+        512,
+        256
+      ],
+      "mittel": 147.65
+    },
+    {
+      "nr": 120,
+      "durchlauf": 3,
+      "parameter": "prioritized",
+      "neuer_wert": true,
+      "mittel": 140.95
+    },
+    {
+      "nr": 121,
+      "durchlauf": 3,
+      "parameter": "activation",
+      "neuer_wert": "tanh",
+      "mittel": 122.7
+    },
+    {
+      "nr": 122,
+      "durchlauf": 3,
+      "parameter": "eps_decay_steps",
+      "neuer_wert": 40000,
+      "mittel": 139.9
+    },
+    {
+      "nr": 123,
+      "durchlauf": 3,
+      "parameter": "eps_decay_steps",
+      "neuer_wert": 150000,
+      "mittel": 136.9
+    },
+    {
+      "nr": 124,
+      "durchlauf": 4,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.0,
+      "mittel": 146.65
+    },
+    {
+      "nr": 125,
+      "durchlauf": 4,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.25,
+      "mittel": 136.35
+    },
+    {
+      "nr": 126,
+      "durchlauf": 4,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 0.5,
+      "mittel": 137.7
+    },
+    {
+      "nr": 127,
+      "durchlauf": 4,
+      "parameter": "pfad_fokus",
+      "neuer_wert": 1.0,
+      "mittel": 138.95
+    },
+    {
+      "nr": 128,
+      "durchlauf": 4,
+      "parameter": "reward_step",
+      "neuer_wert": 0.0,
+      "mittel": 142.0
+    },
+    {
+      "nr": 129,
+      "durchlauf": 4,
+      "parameter": "target_update",
+      "neuer_wert": 1000,
+      "mittel": 138.45
+    },
+    {
+      "nr": 130,
+      "durchlauf": 4,
+      "parameter": "target_update",
+      "neuer_wert": 2000,
+      "mittel": 139.95
     }
   ],
   "verlauf": [
     "Basis (Durchlauf 1, Seed [11]): 65.65",
-    "D1: perception='rich_grid9' ANGENOMMEN (65.65 -> 67.75)"
+    "D1: perception='rich_grid9' ANGENOMMEN (65.65 -> 67.75)",
+    "D1: spiegel_lernen=False ANGENOMMEN (67.75 -> 70.15)",
+    "D1: fruit_count=10 ANGENOMMEN (70.15 -> 106.90)",
+    "D1: target_update=2000 ANGENOMMEN (106.90 -> 113.15)",
+    "D1: curriculum_anteil=1.0 ANGENOMMEN (113.15 -> 120.65)",
+    "D1: n_step=5 ANGENOMMEN (120.65 -> 123.10)",
+    "D2: target_update=500 ANGENOMMEN (120.40 -> 122.85)",
+    "D2: pfad_fokus=0.7 ANGENOMMEN (122.85 -> 132.35)",
+    "D2: gamma=0.99 ANGENOMMEN (132.35 -> 136.65)",
+    "D3: batch_size=512 ANGENOMMEN (146.20 -> 152.45)"
   ],
-  "durchlauf": 1,
+  "durchlauf": 4,
   "pass_queue": [
+    "num_games",
+    "n_step",
+    "perception",
+    "reward_death",
+    "activation",
+    "prioritized",
+    "spiegel_lernen",
+    "eps_end",
+    "fruit_count",
+    "learning_rate",
     "pfad_fokus_bonus",
     "gamma",
-    "spiegel_lernen",
-    "fruit_count",
-    "target_update",
-    "pfad_fokus",
-    "eps_decay_steps",
-    "curriculum_anteil",
+    "hidden",
     "balance_anteil",
+    "curriculum_anteil",
     "batch_size",
-    "eps_end",
-    "n_step",
-    "activation",
-    "hidden"
+    "train_every",
+    "eps_decay_steps"
   ],
-  "pass_verbessert": true,
-  "kandidaten_gesamt": 11,
-  "verbesserungen": 1,
-  "laeufe_gesamt": 12,
+  "pass_verbessert": false,
+  "kandidaten_gesamt": 130,
+  "verbesserungen": 10,
+  "laeufe_gesamt": 134,
   "seeds": 1,
   "minuten": 10.0,
   "_pass_seeds": [
-    11
+    51
   ]
 }

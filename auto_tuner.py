@@ -62,6 +62,7 @@ import sys
 import time
 
 from ai.dqn.config import DQNConfig
+from ai.dqn.trainer import runbest_path
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(_ROOT, "logs")
@@ -114,6 +115,35 @@ def _signatur(overrides: dict) -> str:
     garantiert denselben Schluessel ergeben."""
     norm = {k: (list(v) if isinstance(v, tuple) else v) for k, v in overrides.items()}
     return json.dumps(norm, sort_keys=True, default=str)
+
+
+def _runbest_datei(overrides: dict) -> str:
+    """Pfad der geteilten Runbest-Datei fuer die Brettgroesse dieser Config
+    (Standard 17x15, falls nicht ueberschrieben)."""
+    d = DQNConfig()
+    cols = overrides.get("grid_cols", d.grid_cols)
+    rows = overrides.get("grid_rows", d.grid_rows)
+    return runbest_path(cols, rows)
+
+
+def _archiviere_checkpoint(overrides: dict, ordner: str, nr) -> str | None:
+    """Sichert eine EIGENE Kopie der gerade trainierten Gewichte fuer
+    Kandidat `nr` -- die geteilte Runbest-Datei in models/ wird vom
+    NAECHSTEN Kandidaten sofort wieder ueberschrieben (das war die Luecke,
+    die Lucas Nachfrage am 2026-07-25 aufgedeckt hat: die Gewichte des
+    besten 10-Min-Laufs waren schon durch einen spaeteren, schwaecheren
+    Kandidaten ersetzt -- die EINSTELLUNGEN blieben zwar in zustand.json
+    korrekt erhalten, aber das tatsaechlich trainierte Netz war weg).
+    Gibt den Pfad der Kopie zurueck, oder None falls die Quelldatei fehlt."""
+    quelle = _runbest_datei(overrides)
+    if not os.path.exists(quelle):
+        return None
+    ziel_ordner = os.path.join(ordner, "checkpoints")
+    os.makedirs(ziel_ordner, exist_ok=True)
+    name = f"kandidat_{nr:04d}" if isinstance(nr, int) else str(nr)
+    ziel = os.path.join(ziel_ordner, f"{name}.pt")
+    shutil.copy2(quelle, ziel)
+    return ziel
 
 
 def _alternativen(param: str, best: dict) -> list:
@@ -312,6 +342,11 @@ def schreibe_abschlussbericht(ordner: str, zustand: dict, status: str) -> str:
         best_cmd,
         "```",
         "",
+        f"Trainierte Gewichte dieser genauen Konfiguration: "
+        f"`{zustand.get('best_checkpoint') or '(nicht verfuegbar -- alter Zustand ohne Checkpoint-Sicherung)'}`"
+        " -- direkt ladbar, kein erneutes Training noetig, um sie anzuschauen "
+        "(z.B. mit watch_ai.py als Vorlage).",
+        "",
         "## Verlauf der Bestmarke",
     ]
     for eintrag in zustand["verlauf"]:
@@ -392,8 +427,25 @@ def main() -> None:
     parser.add_argument("--max-kandidaten", type=int, default=0,
                         help="0 = unbegrenzt (nur fuer Tests)")
     parser.add_argument("--fortsetzen", metavar="ZUSTAND_JSON",
-                        help="einen frueheren Tuner-Lauf fortsetzen")
+                        help="einen frueheren Tuner-Lauf EXAKT fortsetzen "
+                             "(gleiches --minuten wie vorher -- sonst werden "
+                             "Kandidaten mit unterschiedlichem Zeitbudget "
+                             "gegeneinander verglichen, das waere unfair)")
+    parser.add_argument("--basis-von", metavar="ZUSTAND_JSON",
+                        help="NEUE, SAUBERE Runde starten (eigener Log-"
+                             "Ordner, eigene Historie), aber mit der besten "
+                             "Config aus einem frueheren Lauf als Startpunkt "
+                             "statt bei Null -- gedacht fuer genau den Fall "
+                             "'jetzt mit laengerem --minuten weitersuchen'. "
+                             "Die alte Historie bleibt unangetastet erhalten "
+                             "und wird nicht mit den neuen (laenger "
+                             "gemessenen) Werten vermischt.")
     args = parser.parse_args()
+
+    if args.fortsetzen and args.basis_von:
+        raise SystemExit("--fortsetzen und --basis-von schliessen sich aus "
+                          "-- entweder EXAKT fortsetzen oder NEU mit anderem "
+                          "Zeitbudget, aber gelerntem Startpunkt.")
 
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)
@@ -405,10 +457,52 @@ def main() -> None:
             zustand = json.load(fh)
         if "hidden" in zustand["best_overrides"]:
             zustand["best_overrides"]["hidden"] = tuple(zustand["best_overrides"]["hidden"])
+        zustand.setdefault("best_checkpoint", None)   # aeltere zustand.json ohne dieses Feld
         ordner = os.path.dirname(os.path.abspath(args.fortsetzen))
         protokoll = Protokoll(ordner)
         protokoll.notiz(f"FORTSETZUNG: Bestmarke {zustand['best_score']:.2f} "
                         f"(Durchlauf {zustand['durchlauf']})")
+    elif args.basis_von:
+        with open(args.basis_von, encoding="utf-8") as fh:
+            vorlage = json.load(fh)
+        basis = dict(vorlage["best_overrides"])
+        if "hidden" in basis:
+            basis["hidden"] = tuple(basis["hidden"])
+
+        ordner = os.path.join(LOG_DIR, f"autotuner-{time.strftime('%Y%m%d-%H%M%S')}")
+        protokoll = Protokoll(ordner)
+        sicherung = os.path.join(ordner, "modell-sicherung")
+        os.makedirs(sicherung, exist_ok=True)
+        if os.path.isdir(MODEL_DIR):
+            for name in os.listdir(MODEL_DIR):
+                quelle = os.path.join(MODEL_DIR, name)
+                if os.path.isfile(quelle):
+                    shutil.copy2(quelle, os.path.join(sicherung, name))
+        protokoll.notiz(f"Modell-Sicherung nach {sicherung}")
+        protokoll.notiz(
+            f"NEUE RUNDE mit gelerntem Startpunkt aus {args.basis_von} "
+            f"(dortige Bestmarke {vorlage['best_score']:.2f} bei "
+            f"{vorlage.get('minuten', '?')} Min/Lauf): {basis}")
+        protokoll.notiz(
+            f"Vermesse diesen Startpunkt jetzt FRISCH bei {args.minuten:g} "
+            "Min/Lauf -- der alte Score ist mit einem anderen Zeitbudget "
+            "gemessen und NICHT direkt vergleichbar.")
+
+        zustand = {
+            "best_overrides": basis,
+            "best_score": 0.0,
+            "best_checkpoint": None,
+            "historie": [],
+            "verlauf": [f"Startpunkt uebernommen aus {args.basis_von}: {basis}"],
+            "durchlauf": 0,
+            "pass_queue": [],
+            "pass_verbessert": False,
+            "kandidaten_gesamt": 0,
+            "verbesserungen": 0,
+            "laeufe_gesamt": 0,
+            "seeds": n_seeds,
+            "minuten": args.minuten,
+        }
     else:
         ordner = os.path.join(LOG_DIR, f"autotuner-{time.strftime('%Y%m%d-%H%M%S')}")
         protokoll = Protokoll(ordner)
@@ -426,6 +520,7 @@ def main() -> None:
         zustand = {
             "best_overrides": dict(BASIS_ABWEICHUNGEN),
             "best_score": 0.0,
+            "best_checkpoint": None,
             "historie": [],
             "verlauf": [],
             "durchlauf": 0,
@@ -495,18 +590,26 @@ def main() -> None:
                 zustand["_pass_seeds"] = seeds
 
                 # Bestmarke frisch nachmessen (Waerme-Drift-Anker fuer diesen
-                # Durchlauf), mit denselben Seeds wie die Kandidaten.
+                # Durchlauf), mit denselben Seeds wie die Kandidaten. Zaehlt
+                # NICHT als "Kandidat" (es ist ja keine neue Einstellung),
+                # bekommt aber trotzdem eine eigene Checkpoint-Nummer, damit
+                # auch diese Gewichte nicht spurlos untergehen.
                 neu = messe(zustand["best_overrides"], zustand["durchlauf"], seeds)
                 if neu is not None:
+                    basis_checkpoint = _archiviere_checkpoint(
+                        zustand["best_overrides"], ordner,
+                        nr=f"D{zustand['durchlauf']}_basis")
                     if zustand["durchlauf"] > 1:
                         protokoll.notiz(
                             f"Durchlauf {zustand['durchlauf']} startet — Bestmarke "
                             f"frisch nachgemessen: {zustand['best_score']:.2f} -> {neu:.2f} "
                             f"(Seeds {seeds})")
                     zustand["best_score"] = neu
+                    zustand["best_checkpoint"] = basis_checkpoint
                     if not zustand["verlauf"]:
                         zustand["verlauf"].append(
-                            f"Basis (Durchlauf 1, Seed {seeds}): {neu:.2f}")
+                            f"Basis (Durchlauf 1, Seed {seeds}): {neu:.2f} "
+                            f"[Gewichte: {basis_checkpoint}]")
                 protokoll.zustand(zustand)
                 if _STOP["flag"]:
                     status = "per Strg+C beendet"
@@ -517,6 +620,7 @@ def main() -> None:
             seeds = zustand["_pass_seeds"]
             best_wert = None
             best_wert_score = zustand["best_score"]
+            best_wert_checkpoint = None
 
             for wert in _alternativen(param, zustand["best_overrides"]):
                 if _STOP["flag"] or (time.time() - start) / 3600 >= args.max_stunden:
@@ -529,14 +633,26 @@ def main() -> None:
                     f"[D{zustand['durchlauf']}] Kandidat #{nr}: {param} -> {wert!r} "
                     f"(Bestmarke {zustand['best_score']:.2f})")
                 mittel = messe(kandidat, zustand["durchlauf"], seeds)
+                # EIGENE Kopie der trainierten Gewichte sichern, BEVOR der
+                # naechste Kandidat die geteilte Runbest-Datei ueberschreibt
+                # (siehe _archiviere_checkpoint -- das war die Luecke, die
+                # Lucas Nachfrage aufgedeckt hat: Einstellungen blieben
+                # korrekt in zustand.json, aber die trainierten GEWICHTE
+                # eines fruehen guten Kandidaten gingen sonst unter, sobald
+                # ein spaeterer -- egal ob besserer oder schlechterer --
+                # Kandidat lief).
+                checkpoint = (_archiviere_checkpoint(kandidat, ordner, nr)
+                             if mittel is not None else None)
                 zustand["historie"].append({
                     "nr": nr, "durchlauf": zustand["durchlauf"],
                     "parameter": param, "neuer_wert": wert, "mittel": mittel,
+                    "checkpoint": checkpoint,
                 })
                 anzeige = "FEHLGESCHLAGEN" if mittel is None else f"{mittel:.2f}"
                 protokoll.notiz(f"    Ergebnis: {anzeige}")
                 if mittel is not None and mittel > best_wert_score:
                     best_wert, best_wert_score = wert, mittel
+                    best_wert_checkpoint = checkpoint
                 protokoll.zustand(zustand)
 
             # ---- Besten Wert dieses Parameters ggf. uebernehmen ---------- #
@@ -545,14 +661,17 @@ def main() -> None:
                 alt = zustand["best_score"]
                 zustand["best_overrides"][param] = best_wert
                 zustand["best_score"] = best_wert_score
+                zustand["best_checkpoint"] = best_wert_checkpoint
                 zustand["verbesserungen"] += 1
                 zustand["pass_verbessert"] = True
                 zustand["verlauf"].append(
                     f"D{zustand['durchlauf']}: {param}={best_wert!r} ANGENOMMEN "
-                    f"({alt:.2f} -> {best_wert_score:.2f})")
+                    f"({alt:.2f} -> {best_wert_score:.2f}) "
+                    f"[Gewichte: {best_wert_checkpoint}]")
                 protokoll.notiz(
                     f"  => {param} = {best_wert!r} ANGENOMMEN "
-                    f"({alt:.2f} -> {best_wert_score:.2f})")
+                    f"({alt:.2f} -> {best_wert_score:.2f}) "
+                    f"-- Gewichte gesichert: {best_wert_checkpoint}")
 
             zustand["pass_queue"].pop(0)
             protokoll.zustand(zustand)

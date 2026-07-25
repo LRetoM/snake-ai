@@ -179,6 +179,39 @@ zwei weitere Probleme auf):
   WICHTIG: waehrend der Tuner laeuft KEIN anderes Training parallel
   starten (verfaelscht die Wanduhr-Messungen).
 
+**Nachtrag Runde 5d** (2026-07-25, `--basis-von` fuer laengere Zeitfenster):
+Lucas berechtigter Einwand nach der ersten Nacht: 10-Min-Fenster koennten
+"schnelle Sprinter" (z.B. `fruit_count=10`, kurzes `eps_decay_steps`)
+bevorzugen und "Langstreckenlaeufer" (z.B. `gamma=0.99`, niedrige
+Lernrate — brauchen laenger zum Stabilisieren, koennen aber langfristig
+besser sein) benachteiligen. Neue Option `--basis-von ZUSTAND_JSON`:
+startet eine KOMPLETT NEUE, saubere Runde (eigener Log-Ordner, leere
+Historie) mit der besten Config eines frueheren Laufs als Startpunkt statt
+bei Null — vermisst diesen Startpunkt aber sofort FRISCH beim neuen
+`--minuten`, statt den alten (mit anderem Zeitbudget gemessenen) Score
+weiterzuverwenden. Bewusst NICHT einfach `--fortsetzen --minuten X`
+benutzt: das haette 10-Min- und 20-Min-Messungen in EINEM Vergleich
+vermischt — ein laenger gemessener Kandidat haette einen kurz gemessenen
+Bestwert unfair geschlagen, nur wegen der Zeit, nicht wegen der
+Einstellung. Getestet: neuer Lauf startet korrekt beim uebernommenen
+Startpunkt, misst ihn frisch neu (anderer Score als die Vorlage, wie
+erwartet), fuehrt die Suche eigenstaendig fort.
+Empfohlener Ablauf: die aktuelle 10-Min-Runde bis Konvergenz laufen
+lassen, danach `python auto_tuner.py --basis-von logs/autotuner-<alt>/
+zustand.json --minuten 20` fuer eine zweite, gruendlichere Runde ab dem
+gelernten Startpunkt.
+
+**Messstand nach ~15h (2026-07-25, 10-Min-Fenster, noch laufend)**:
+Durchlauf 3, 9 angenommene Verbesserungen seit Basis (Prüfung 65.65 →
+146.2, ≈48%→58,5% Feldfüllung im Schnitt). Angenommene Kette: `perception=
+rich_grid9` → `spiegel_lernen=False` → `fruit_count=10` (groesster
+Einzelsprung, 70→107) → `target_update=2000` dann `500` → `curriculum_
+anteil=1.0` → `n_step=5` → `pfad_fokus=0.7` → `gamma=0.99`. Bemerkenswert:
+beste Einzelpartie (Training) erreichte Score 213, beste PRUEFUNGS-Partie
+(ohne Zufall) 207 — das sind 82-85% Feldfuellung in mindestens einer
+fairen Partie. Verbesserungen pro Durchlauf sinken (6→3→?), deutet auf
+nahende Konvergenz hin.
+
 **Naechster Schritt (Empfehlung)**: Zwei saubere A/B-Paare mit je 2 Seeds,
 gleiches Zeitbudget, identische Basis (rich_grid7, Standard-Defaults):
 1. `--curriculum 0` vs. `--curriculum 0.25` — wirkt das Curriculum?

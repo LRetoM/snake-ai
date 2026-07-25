@@ -28,3 +28,253 @@ Gestartet: 2026-07-24 17:48:01
 - 19:38 [D1] Kandidat #11: learning_rate -> 0.002 (Bestmarke 67.75)
 - 19:48     Ergebnis: 64.40
 - 19:48 [D1] Kandidat #12: pfad_fokus_bonus -> 0.02 (Bestmarke 67.75)
+- 19:58     Ergebnis: 66.30
+- 19:58 [D1] Kandidat #13: pfad_fokus_bonus -> 0.1 (Bestmarke 67.75)
+- 20:08     Ergebnis: 68.55
+- 20:08 [D1] Kandidat #14: gamma -> 0.95 (Bestmarke 67.75)
+- 20:18     Ergebnis: 64.80
+- 20:18 [D1] Kandidat #15: gamma -> 0.99 (Bestmarke 67.75)
+- 20:28     Ergebnis: 68.15
+- 20:28 [D1] Kandidat #16: spiegel_lernen -> False (Bestmarke 67.75)
+- 20:38     Ergebnis: 70.15
+- 20:38   => spiegel_lernen = False ANGENOMMEN (67.75 -> 70.15)
+- 20:38 [D1] Kandidat #17: fruit_count -> 1 (Bestmarke 70.15)
+- 20:48     Ergebnis: 55.25
+- 20:48 [D1] Kandidat #18: fruit_count -> 5 (Bestmarke 70.15)
+- 20:58     Ergebnis: 76.40
+- 20:58 [D1] Kandidat #19: fruit_count -> 10 (Bestmarke 70.15)
+- 21:08     Ergebnis: 106.90
+- 21:08   => fruit_count = 10 ANGENOMMEN (70.15 -> 106.90)
+- 21:08 [D1] Kandidat #20: target_update -> 500 (Bestmarke 106.90)
+- 21:18     Ergebnis: 111.40
+- 21:18 [D1] Kandidat #21: target_update -> 2000 (Bestmarke 106.90)
+- 21:28     Ergebnis: 113.15
+- 21:28   => target_update = 2000 ANGENOMMEN (106.90 -> 113.15)
+- 21:28 [D1] Kandidat #22: pfad_fokus -> 0.25 (Bestmarke 113.15)
+- 21:38     Ergebnis: 109.20
+- 21:38 [D1] Kandidat #23: pfad_fokus -> 0.5 (Bestmarke 113.15)
+- 21:48     Ergebnis: 104.70
+- 21:48 [D1] Kandidat #24: pfad_fokus -> 0.7 (Bestmarke 113.15)
+- 21:58     Ergebnis: 105.35
+- 21:58 [D1] Kandidat #25: pfad_fokus -> 1.0 (Bestmarke 113.15)
+- 22:08     Ergebnis: 104.50
+- 22:08 [D1] Kandidat #26: eps_decay_steps -> 40000 (Bestmarke 113.15)
+- 22:18     Ergebnis: 110.25
+- 22:18 [D1] Kandidat #27: eps_decay_steps -> 150000 (Bestmarke 113.15)
+- 22:28     Ergebnis: 90.95
+- 22:28 [D1] Kandidat #28: curriculum_anteil -> 0.0 (Bestmarke 113.15)
+- 22:38     Ergebnis: 87.95
+- 22:38 [D1] Kandidat #29: curriculum_anteil -> 0.5 (Bestmarke 113.15)
+- 22:49     Ergebnis: 105.70
+- 22:49 [D1] Kandidat #30: curriculum_anteil -> 1.0 (Bestmarke 113.15)
+- 22:59     Ergebnis: 120.65
+- 22:59   => curriculum_anteil = 1.0 ANGENOMMEN (113.15 -> 120.65)
+- 22:59 [D1] Kandidat #31: balance_anteil -> 0.0 (Bestmarke 120.65)
+- 23:09     Ergebnis: 108.95
+- 23:09 [D1] Kandidat #32: balance_anteil -> 0.5 (Bestmarke 120.65)
+- 23:19     Ergebnis: 118.60
+- 23:19 [D1] Kandidat #33: batch_size -> 128 (Bestmarke 120.65)
+- 23:29     Ergebnis: 116.80
+- 23:29 [D1] Kandidat #34: batch_size -> 512 (Bestmarke 120.65)
+- 23:39     Ergebnis: 120.85
+- 23:39 [D1] Kandidat #35: eps_end -> 0.05 (Bestmarke 120.65)
+- 23:49     Ergebnis: 115.90
+- 23:49 [D1] Kandidat #36: n_step -> 1 (Bestmarke 120.65)
+- 23:59     Ergebnis: 118.55
+- 23:59 [D1] Kandidat #37: n_step -> 5 (Bestmarke 120.65)
+- 00:09     Ergebnis: 123.10
+- 00:09   => n_step = 5 ANGENOMMEN (120.65 -> 123.10)
+- 00:09 [D1] Kandidat #38: activation -> 'tanh' (Bestmarke 123.10)
+- 00:19     Ergebnis: 100.65
+- 00:19 [D1] Kandidat #39: hidden -> (128, 128) (Bestmarke 123.10)
+- 00:29     Ergebnis: 117.95
+- 00:29 [D1] Kandidat #40: hidden -> (256, 256) (Bestmarke 123.10)
+- 00:39     Ergebnis: 121.30
+- 00:39 [D1] Kandidat #41: hidden -> (512, 256) (Bestmarke 123.10)
+- 00:49     Ergebnis: 122.65
+- 00:59 Durchlauf 2 startet — Bestmarke frisch nachgemessen: 123.10 -> 120.40 (Seeds [23])
+- 00:59 [D2] Kandidat #42: target_update -> 500 (Bestmarke 120.40)
+- 01:09     Ergebnis: 122.85
+- 01:09 [D2] Kandidat #43: target_update -> 1000 (Bestmarke 120.40)
+- 01:19     Ergebnis: 122.70
+- 01:19   => target_update = 500 ANGENOMMEN (120.40 -> 122.85)
+- 01:19 [D2] Kandidat #44: reward_step -> 0.0 (Bestmarke 122.85)
+- 01:29     Ergebnis: 116.45
+- 01:29 [D2] Kandidat #45: eps_decay_steps -> 40000 (Bestmarke 122.85)
+- 01:39     Ergebnis: 122.95
+- 01:39 [D2] Kandidat #46: eps_decay_steps -> 150000 (Bestmarke 122.85)
+- 01:49     Ergebnis: 107.70
+- 01:49 [D2] Kandidat #47: eps_end -> 0.05 (Bestmarke 122.85)
+- 01:59     Ergebnis: 118.95
+- 01:59 [D2] Kandidat #48: pfad_fokus_bonus -> 0.02 (Bestmarke 122.85)
+- 02:09     Ergebnis: 115.05
+- 02:09 [D2] Kandidat #49: pfad_fokus_bonus -> 0.1 (Bestmarke 122.85)
+- 02:19     Ergebnis: 121.75
+- 02:19 [D2] Kandidat #50: curriculum_anteil -> 0.0 (Bestmarke 122.85)
+- 02:29     Ergebnis: 116.85
+- 02:29 [D2] Kandidat #51: curriculum_anteil -> 0.25 (Bestmarke 122.85)
+- 02:39     Ergebnis: 112.05
+- 02:39 [D2] Kandidat #52: curriculum_anteil -> 0.5 (Bestmarke 122.85)
+- 02:49     Ergebnis: 117.55
+- 02:49 [D2] Kandidat #53: spiegel_lernen -> True (Bestmarke 122.85)
+- 02:59     Ergebnis: 99.20
+- 02:59 [D2] Kandidat #54: fruit_count -> 1 (Bestmarke 122.85)
+- 03:09     Ergebnis: 57.20
+- 03:09 [D2] Kandidat #55: fruit_count -> 3 (Bestmarke 122.85)
+- 03:19     Ergebnis: 75.80
+- 03:19 [D2] Kandidat #56: fruit_count -> 5 (Bestmarke 122.85)
+- 03:29     Ergebnis: 106.00
+- 03:29 [D2] Kandidat #57: activation -> 'tanh' (Bestmarke 122.85)
+- 03:39     Ergebnis: 100.10
+- 03:39 [D2] Kandidat #58: prioritized -> True (Bestmarke 122.85)
+- 03:49     Ergebnis: 113.25
+- 03:49 [D2] Kandidat #59: learning_rate -> 0.0005 (Bestmarke 122.85)
+- 03:59     Ergebnis: 123.90
+- 03:59 [D2] Kandidat #60: learning_rate -> 0.002 (Bestmarke 122.85)
+- 04:10     Ergebnis: 117.90
+- 04:10 [D2] Kandidat #61: pfad_fokus -> 0.25 (Bestmarke 122.85)
+- 04:20     Ergebnis: 125.25
+- 04:20 [D2] Kandidat #62: pfad_fokus -> 0.5 (Bestmarke 122.85)
+- 04:30     Ergebnis: 125.80
+- 04:30 [D2] Kandidat #63: pfad_fokus -> 0.7 (Bestmarke 122.85)
+- 04:40     Ergebnis: 132.35
+- 04:40 [D2] Kandidat #64: pfad_fokus -> 1.0 (Bestmarke 122.85)
+- 04:50     Ergebnis: 48.75
+- 04:50   => pfad_fokus = 0.7 ANGENOMMEN (122.85 -> 132.35)
+- 04:50 [D2] Kandidat #65: batch_size -> 128 (Bestmarke 132.35)
+- 05:00     Ergebnis: 128.50
+- 05:00 [D2] Kandidat #66: batch_size -> 512 (Bestmarke 132.35)
+- 05:10     Ergebnis: 124.05
+- 05:10 [D2] Kandidat #67: balance_anteil -> 0.0 (Bestmarke 132.35)
+- 05:20     Ergebnis: 124.15
+- 05:20 [D2] Kandidat #68: balance_anteil -> 0.5 (Bestmarke 132.35)
+- 05:30     Ergebnis: 128.00
+- 05:30 [D2] Kandidat #69: hidden -> (128, 128) (Bestmarke 132.35)
+- 05:40     Ergebnis: 134.05
+- 05:40 [D2] Kandidat #70: hidden -> (256, 256) (Bestmarke 132.35)
+- 05:50     Ergebnis: 131.45
+- 05:50 [D2] Kandidat #71: hidden -> (512, 256) (Bestmarke 132.35)
+- 06:00     Ergebnis: 134.60
+- 06:00 [D2] Kandidat #72: train_every -> 2 (Bestmarke 132.35)
+- 06:10     Ergebnis: 124.90
+- 06:10 [D2] Kandidat #73: num_games -> 8 (Bestmarke 132.35)
+- 06:20     Ergebnis: 130.20
+- 06:20 [D2] Kandidat #74: num_games -> 24 (Bestmarke 132.35)
+- 06:30     Ergebnis: 126.75
+- 06:30 [D2] Kandidat #75: perception -> 'rich' (Bestmarke 132.35)
+- 06:40     Ergebnis: 113.35
+- 06:40 [D2] Kandidat #76: perception -> 'rich_grid5' (Bestmarke 132.35)
+- 06:50     Ergebnis: 118.35
+- 06:50 [D2] Kandidat #77: perception -> 'rich_grid7' (Bestmarke 132.35)
+- 07:00     Ergebnis: 117.40
+- 07:00 [D2] Kandidat #78: reward_death -> -20.0 (Bestmarke 132.35)
+- 07:10     Ergebnis: 123.90
+- 07:10 [D2] Kandidat #79: n_step -> 1 (Bestmarke 132.35)
+- 07:20     Ergebnis: 109.95
+- 07:20 [D2] Kandidat #80: n_step -> 3 (Bestmarke 132.35)
+- 07:30     Ergebnis: 124.10
+- 07:30 [D2] Kandidat #81: gamma -> 0.95 (Bestmarke 132.35)
+- 07:40     Ergebnis: 111.30
+- 07:40 [D2] Kandidat #82: gamma -> 0.99 (Bestmarke 132.35)
+- 07:50     Ergebnis: 136.65
+- 07:50   => gamma = 0.99 ANGENOMMEN (132.35 -> 136.65)
+- 08:00 Durchlauf 3 startet — Bestmarke frisch nachgemessen: 136.65 -> 146.20 (Seeds [37])
+- 08:00 [D3] Kandidat #83: n_step -> 1 (Bestmarke 146.20)
+- 08:10     Ergebnis: 114.05
+- 08:10 [D3] Kandidat #84: n_step -> 3 (Bestmarke 146.20)
+- 08:20     Ergebnis: 134.20
+- 08:20 [D3] Kandidat #85: pfad_fokus_bonus -> 0.02 (Bestmarke 146.20)
+- 08:30     Ergebnis: 145.50
+- 08:30 [D3] Kandidat #86: pfad_fokus_bonus -> 0.1 (Bestmarke 146.20)
+- 08:40     Ergebnis: 143.50
+- 08:40 [D3] Kandidat #87: fruit_count -> 1 (Bestmarke 146.20)
+- 08:50     Ergebnis: 75.35
+- 08:50 [D3] Kandidat #88: fruit_count -> 3 (Bestmarke 146.20)
+- 09:00     Ergebnis: 89.95
+- 09:00 [D3] Kandidat #89: fruit_count -> 5 (Bestmarke 146.20)
+- 09:11     Ergebnis: 113.75
+- 09:11 [D3] Kandidat #90: eps_end -> 0.05 (Bestmarke 146.20)
+- 09:21     Ergebnis: 141.10
+- 09:21 [D3] Kandidat #91: spiegel_lernen -> True (Bestmarke 146.20)
+- 09:31     Ergebnis: 111.45
+- 09:31 [D3] Kandidat #92: num_games -> 8 (Bestmarke 146.20)
+- 09:41     Ergebnis: 136.50
+- 09:41 [D3] Kandidat #93: num_games -> 24 (Bestmarke 146.20)
+- 09:51     Ergebnis: 136.90
+- 09:51 [D3] Kandidat #94: curriculum_anteil -> 0.0 (Bestmarke 146.20)
+- 10:01     Ergebnis: 136.05
+- 10:01 [D3] Kandidat #95: curriculum_anteil -> 0.25 (Bestmarke 146.20)
+- 10:11     Ergebnis: 136.35
+- 10:11 [D3] Kandidat #96: curriculum_anteil -> 0.5 (Bestmarke 146.20)
+- 10:21     Ergebnis: 128.70
+- 10:21 [D3] Kandidat #97: batch_size -> 128 (Bestmarke 146.20)
+- 10:31     Ergebnis: 131.55
+- 10:31 [D3] Kandidat #98: batch_size -> 512 (Bestmarke 146.20)
+- 10:41     Ergebnis: 152.45
+- 10:41   => batch_size = 512 ANGENOMMEN (146.20 -> 152.45)
+- 10:41 [D3] Kandidat #99: reward_death -> -20.0 (Bestmarke 152.45)
+- 10:51     Ergebnis: 135.25
+- 10:51 [D3] Kandidat #100: reward_step -> 0.0 (Bestmarke 152.45)
+- 11:01     Ergebnis: 126.70
+- 11:01 [D3] Kandidat #101: learning_rate -> 0.0005 (Bestmarke 152.45)
+- 11:11     Ergebnis: 128.60
+- 11:11 [D3] Kandidat #102: learning_rate -> 0.002 (Bestmarke 152.45)
+- 11:21     Ergebnis: 129.40
+- 11:21 [D3] Kandidat #103: pfad_fokus -> 0.0 (Bestmarke 152.45)
+- 11:31     Ergebnis: 140.85
+- 11:31 [D3] Kandidat #104: pfad_fokus -> 0.25 (Bestmarke 152.45)
+- 11:41     Ergebnis: 138.60
+- 11:41 [D3] Kandidat #105: pfad_fokus -> 0.5 (Bestmarke 152.45)
+- 11:51     Ergebnis: 130.25
+- 11:51 [D3] Kandidat #106: pfad_fokus -> 1.0 (Bestmarke 152.45)
+- 12:01     Ergebnis: 76.60
+- 12:01 [D3] Kandidat #107: gamma -> 0.95 (Bestmarke 152.45)
+- 12:11     Ergebnis: 114.15
+- 12:11 [D3] Kandidat #108: gamma -> 0.97 (Bestmarke 152.45)
+- 12:21     Ergebnis: 128.30
+- 12:21 [D3] Kandidat #109: train_every -> 2 (Bestmarke 152.45)
+- 12:31     Ergebnis: 133.85
+- 12:31 [D3] Kandidat #110: target_update -> 1000 (Bestmarke 152.45)
+- 12:41     Ergebnis: 138.70
+- 12:41 [D3] Kandidat #111: target_update -> 2000 (Bestmarke 152.45)
+- 12:51     Ergebnis: 135.65
+- 12:51 [D3] Kandidat #112: balance_anteil -> 0.0 (Bestmarke 152.45)
+- 13:01     Ergebnis: 139.30
+- 13:01 [D3] Kandidat #113: balance_anteil -> 0.5 (Bestmarke 152.45)
+- 13:11     Ergebnis: 143.40
+- 13:11 [D3] Kandidat #114: perception -> 'rich' (Bestmarke 152.45)
+- 13:21     Ergebnis: 121.05
+- 13:21 [D3] Kandidat #115: perception -> 'rich_grid5' (Bestmarke 152.45)
+- 13:31     Ergebnis: 127.85
+- 13:31 [D3] Kandidat #116: perception -> 'rich_grid7' (Bestmarke 152.45)
+- 13:41     Ergebnis: 128.50
+- 13:41 [D3] Kandidat #117: hidden -> (128, 128) (Bestmarke 152.45)
+- 13:51     Ergebnis: 133.30
+- 13:51 [D3] Kandidat #118: hidden -> (256, 256) (Bestmarke 152.45)
+- 14:01     Ergebnis: 144.30
+- 14:01 [D3] Kandidat #119: hidden -> (512, 256) (Bestmarke 152.45)
+- 14:12     Ergebnis: 147.65
+- 14:12 [D3] Kandidat #120: prioritized -> True (Bestmarke 152.45)
+- 14:22     Ergebnis: 140.95
+- 14:22 [D3] Kandidat #121: activation -> 'tanh' (Bestmarke 152.45)
+- 14:32     Ergebnis: 122.70
+- 14:32 [D3] Kandidat #122: eps_decay_steps -> 40000 (Bestmarke 152.45)
+- 14:42     Ergebnis: 139.90
+- 14:42 [D3] Kandidat #123: eps_decay_steps -> 150000 (Bestmarke 152.45)
+- 14:52     Ergebnis: 136.90
+- 15:02 Durchlauf 4 startet — Bestmarke frisch nachgemessen: 152.45 -> 144.70 (Seeds [51])
+- 15:02 [D4] Kandidat #124: pfad_fokus -> 0.0 (Bestmarke 144.70)
+- 15:12     Ergebnis: 146.65
+- 15:12 [D4] Kandidat #125: pfad_fokus -> 0.25 (Bestmarke 144.70)
+- 15:22     Ergebnis: 136.35
+- 15:22 [D4] Kandidat #126: pfad_fokus -> 0.5 (Bestmarke 144.70)
+- 15:32     Ergebnis: 137.70
+- 15:32 [D4] Kandidat #127: pfad_fokus -> 1.0 (Bestmarke 144.70)
+- 15:42     Ergebnis: 138.95
+- 15:42 [D4] Kandidat #128: reward_step -> 0.0 (Bestmarke 144.70)
+- 15:52     Ergebnis: 142.00
+- 15:52 [D4] Kandidat #129: target_update -> 1000 (Bestmarke 144.70)
+- 16:02     Ergebnis: 138.45
+- 16:02 [D4] Kandidat #130: target_update -> 2000 (Bestmarke 144.70)
+- 16:12     Ergebnis: 139.95
+- 16:12 [D4] Kandidat #131: num_games -> 8 (Bestmarke 144.70)
