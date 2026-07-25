@@ -50,6 +50,16 @@ from ai.dqn.trainer import (
 
 # ----------------------------- Fenster-Layout ------------------------------ #
 WIN_W, WIN_H = 1360, 900
+
+# Menue-Layout (Start-Menue, siehe _draw_menu). Eigene Konstanten statt lokaler
+# Variablen, weil MENU_ZEILEN_SICHTBAR (wie viele Zeilen aufs Fenster passen,
+# fuer das Scrollen unten) dieselben Zahlen kennen muss.
+MENU_Y0 = 130
+MENU_ROW_H = 42
+MENU_GAP = 8
+MENU_UNTERER_RAND = 110   # Platz fuer Fehlermeldung + die zwei Fusszeilen-Hinweise
+MENU_ZEILEN_SICHTBAR = max(1, (WIN_H - MENU_UNTERER_RAND - MENU_Y0)
+                          // (MENU_ROW_H + MENU_GAP))
 HEADER_H = 60
 PAD = 20
 BOARD_AREA_H = 232
@@ -103,8 +113,23 @@ GAMMA_PRESETS = [
     ("Kurzsichtig (0.90)", 0.90),
     ("Normal (0.95)", 0.95),
     ("Weitsichtig (0.97)", 0.97),
+    ("Sehr weitsichtig (0.99)", 0.99),
 ]
 NSTEP_PRESETS = [("1 Zug", 1), ("3 Züge", 3), ("5 Züge", 5)]
+# Ab hier: Regler, die urspruenglich nur in ai/dqn/config.py bzw. per
+# --override einstellbar waren -- auf Lucas Wunsch ("alles im Fenster
+# einstellen koennen") jetzt auch im Menue. Presets orientieren sich am
+# Suchraum des Auto-Tuners (auto_tuner.SUCHRAUM), damit ein im Tuner
+# gefundener Wert hier immer waehlbar ist.
+BATCH_PRESETS = [("Klein (128)", 128), ("Normal (256)", 256), ("Groß (512)", 512)]
+TARGET_UPDATE_PRESETS = [("Häufig (500)", 500), ("Normal (1000)", 1_000), ("Selten (2000)", 2_000)]
+TRAIN_EVERY_PRESETS = [("Jeden Tick", 1), ("Jeden 2. Tick", 2)]
+EPS_END_PRESETS = [("Niedrig (0.02)", 0.02), ("Hoch (0.05)", 0.05)]
+PFADFOKUS_BONUS_PRESETS = [("Gering (0.02)", 0.02), ("Normal (0.05)", 0.05), ("Stark (0.1)", 0.1)]
+BALANCE_PRESETS = [("Aus", 0.0), ("Normal (30%)", 0.3), ("Hoch (50%)", 0.5)]
+ACTIVATION_PRESETS = [("ReLU", "relu"), ("Tanh", "tanh")]
+REWARD_DEATH_PRESETS = [("Mild (-10)", -10.0), ("Hart (-20)", -20.0)]
+REWARD_STEP_PRESETS = [("Zeitstrafe (-0.01)", -0.01), ("Keine (0.0)", 0.0)]
 FRUIT_OPTIONS = list(range(1, 11))
 # TRAININGSPLAN.md 2.2: Anteil der Trainingspartien, die aus einer
 # gespeicherten Endspiel-Stellung starten statt bei Laenge 3.
@@ -180,6 +205,13 @@ class DQNDashboard:
         self._sync_menu_from_config(self.base_cfg)
         self.resume_on = champion_cfg is not None
         self.menu_row = 0
+        # Scroll-Position des Menues: Index der ersten sichtbaren Zeile.
+        # Noetig, seit das Menue durch die AUSBAUPLAN-Regler (Dueling/Noisy/
+        # QR/mitwachsendes Curriculum) mehr Eintraege hat, als ins Fenster
+        # passen -- ohne Scrollen waeren die unteren Zeilen (inkl. "NEUES
+        # TRAINING STARTEN"!) unsichtbar, aber trotzdem per Enter erreichbar
+        # gewesen (verwirrend). Siehe _menu_scroll_folgen()/_draw_menu().
+        self.menu_scroll = 0
         self.menu_error: str | None = None
 
         self.state = DQNDashboard.MENU
@@ -240,6 +272,17 @@ class DQNDashboard:
         self.nstep_idx = _preset_index(NSTEP_PRESETS, cfg.n_step, 1)
         self.fruit_idx = cfg.fruit_count - 1
         self.per_on = cfg.prioritized
+        self.batch_idx = _preset_index(BATCH_PRESETS, cfg.batch_size, 1)
+        self.target_update_idx = _preset_index(TARGET_UPDATE_PRESETS, cfg.target_update, 1)
+        self.train_every_idx = _preset_index(TRAIN_EVERY_PRESETS, cfg.train_every, 0)
+        self.eps_end_idx = _preset_index(EPS_END_PRESETS, cfg.eps_end, 0)
+        self.pfadfokus_bonus_idx = _preset_index(
+            PFADFOKUS_BONUS_PRESETS, getattr(cfg, "pfad_fokus_bonus", 0.05), 1)
+        self.balance_idx = _preset_index(BALANCE_PRESETS, cfg.balance_anteil, 1)
+        self.activation_idx = _preset_index(ACTIVATION_PRESETS, cfg.activation, 0)
+        self.reward_death_idx = _preset_index(REWARD_DEATH_PRESETS, cfg.reward_death, 0)
+        self.reward_step_idx = _preset_index(REWARD_STEP_PRESETS, cfg.reward_step, 0)
+        self.spiegel_on = getattr(cfg, "spiegel_lernen", True)
         self.curriculum_idx = _preset_index(
             CURRICULUM_PRESETS, getattr(cfg, "curriculum_anteil", 0.0), 2)
         self.pfadfokus_idx = _preset_index(
@@ -280,9 +323,19 @@ class DQNDashboard:
             ("Netzgröße", HIDDEN_PRESETS[self.hidden_idx][0], "hidden"),
             ("Lernrate", LR_PRESETS[self.lr_idx][0], "lr"),
             ("Neugier klingt ab über", EPS_PRESETS[self.eps_idx][0], "eps"),
+            ("Neugier-Boden (Ende)", EPS_END_PRESETS[self.eps_end_idx][0], "eps_end"),
             ("Weitsicht (gamma)", GAMMA_PRESETS[self.gamma_idx][0], "gamma"),
             ("Erfahrungs-Ketten (n-Schritt)", NSTEP_PRESETS[self.nstep_idx][0], "nstep"),
+            ("Batch-Größe", BATCH_PRESETS[self.batch_idx][0], "batch"),
+            ("Zielscheibe erneuern (target_update)",
+             TARGET_UPDATE_PRESETS[self.target_update_idx][0], "target_update"),
+            ("Lerntakt", TRAIN_EVERY_PRESETS[self.train_every_idx][0], "train_every"),
+            ("Aktivierung", ACTIVATION_PRESETS[self.activation_idx][0], "activation"),
             ("Tagebuch priorisieren", "An" if self.per_on else "Aus", "per"),
+            ("Symmetrie-Spiegeln", "An" if self.spiegel_on else "Aus", "spiegel"),
+            ("Längen-Balance", BALANCE_PRESETS[self.balance_idx][0], "balance"),
+            ("Todesstrafe", REWARD_DEATH_PRESETS[self.reward_death_idx][0], "reward_death"),
+            ("Zeitstrafe je Zug", REWARD_STEP_PRESETS[self.reward_step_idx][0], "reward_step"),
             ("Früchte", str(FRUIT_OPTIONS[self.fruit_idx]), "fruit"),
             ("Endspiel-Curriculum", CURRICULUM_PRESETS[self.curriculum_idx][0], "curriculum"),
             ("Curriculum-Schwellen wachsen mit",
@@ -290,6 +343,8 @@ class DQNDashboard:
              "curriculum_mit"),
             ("Pfad-Fokus (erst sicher, dann schnell)",
              PFADFOKUS_PRESETS[self.pfadfokus_idx][0], "pfadfokus"),
+            ("Pfad-Fokus-Bonus je Zug",
+             PFADFOKUS_BONUS_PRESETS[self.pfadfokus_bonus_idx][0], "pfadfokus_bonus"),
             ("Dueling-Kopf", "An" if self.dueling_on else "Aus", "dueling"),
             ("Noisy Nets (statt Epsilon)", "An" if self.noisy_on else "Aus", "noisy"),
             ("Verteilungs-Lernen (QR)", "An" if self.distributional_on else "Aus", "distributional"),
@@ -301,11 +356,19 @@ class DQNDashboard:
     def _on_menu_key(self, key: int) -> None:
         entries = self._menu_entries()
         self.menu_row = min(self.menu_row, len(entries) - 1)
+        # Navigations-Tasten (hoch/runter) getrennt von den Wert-/Aktions-
+        # Tasten behandelt -- beide Gruppen ueberschneiden sich nie (eigene
+        # pygame-Tastencodes), zwei einfache if/elif-Bloecke sind hier klarer
+        # als eine gemeinsame Kette mit einem Seiteneffekt (Scroll-Folgen)
+        # mittendrin.
         if key in (pygame.K_UP, pygame.K_w):
             self.menu_row = (self.menu_row - 1) % len(entries)
+            self._menu_scroll_folgen(len(entries))
         elif key in (pygame.K_DOWN, pygame.K_s):
             self.menu_row = (self.menu_row + 1) % len(entries)
-        elif key in (pygame.K_LEFT, pygame.K_a):
+            self._menu_scroll_folgen(len(entries))
+
+        if key in (pygame.K_LEFT, pygame.K_a):
             self._menu_adjust(entries[self.menu_row][2], -1)
         elif key in (pygame.K_RIGHT, pygame.K_d):
             self._menu_adjust(entries[self.menu_row][2], +1)
@@ -319,6 +382,17 @@ class DQNDashboard:
                 self._menu_adjust(kind, +1)
         elif key == pygame.K_ESCAPE:
             self.running = False
+
+    def _menu_scroll_folgen(self, anzahl_eintraege: int) -> None:
+        """Haelt die ausgewaehlte Zeile innerhalb des sichtbaren Fensters --
+        scrollt nach oben/unten mit, statt die Auswahl von der Anzeige
+        abdriften zu lassen (siehe _draw_menu fuer MENU_ZEILEN_SICHTBAR)."""
+        if self.menu_row < self.menu_scroll:
+            self.menu_scroll = self.menu_row
+        elif self.menu_row >= self.menu_scroll + MENU_ZEILEN_SICHTBAR:
+            self.menu_scroll = self.menu_row - MENU_ZEILEN_SICHTBAR + 1
+        self.menu_scroll = max(0, min(self.menu_scroll,
+                                      max(0, anzahl_eintraege - MENU_ZEILEN_SICHTBAR)))
 
     def _menu_adjust(self, kind: str, delta: int) -> None:
         self.menu_error = None
@@ -340,6 +414,26 @@ class DQNDashboard:
             self.nstep_idx = (self.nstep_idx + delta) % len(NSTEP_PRESETS)
         elif kind == "per":
             self.per_on = not self.per_on
+        elif kind == "batch":
+            self.batch_idx = (self.batch_idx + delta) % len(BATCH_PRESETS)
+        elif kind == "target_update":
+            self.target_update_idx = (self.target_update_idx + delta) % len(TARGET_UPDATE_PRESETS)
+        elif kind == "train_every":
+            self.train_every_idx = (self.train_every_idx + delta) % len(TRAIN_EVERY_PRESETS)
+        elif kind == "eps_end":
+            self.eps_end_idx = (self.eps_end_idx + delta) % len(EPS_END_PRESETS)
+        elif kind == "activation":
+            self.activation_idx = (self.activation_idx + delta) % len(ACTIVATION_PRESETS)
+        elif kind == "spiegel":
+            self.spiegel_on = not self.spiegel_on
+        elif kind == "balance":
+            self.balance_idx = (self.balance_idx + delta) % len(BALANCE_PRESETS)
+        elif kind == "reward_death":
+            self.reward_death_idx = (self.reward_death_idx + delta) % len(REWARD_DEATH_PRESETS)
+        elif kind == "reward_step":
+            self.reward_step_idx = (self.reward_step_idx + delta) % len(REWARD_STEP_PRESETS)
+        elif kind == "pfadfokus_bonus":
+            self.pfadfokus_bonus_idx = (self.pfadfokus_bonus_idx + delta) % len(PFADFOKUS_BONUS_PRESETS)
         elif kind == "fruit":
             self.fruit_idx = (self.fruit_idx + delta) % len(FRUIT_OPTIONS)
         elif kind == "curriculum":
@@ -416,6 +510,16 @@ class DQNDashboard:
         cfg.n_step = NSTEP_PRESETS[self.nstep_idx][1]
         cfg.prioritized = self.per_on
         cfg.fruit_count = FRUIT_OPTIONS[self.fruit_idx]
+        cfg.batch_size = BATCH_PRESETS[self.batch_idx][1]
+        cfg.target_update = TARGET_UPDATE_PRESETS[self.target_update_idx][1]
+        cfg.train_every = TRAIN_EVERY_PRESETS[self.train_every_idx][1]
+        cfg.eps_end = EPS_END_PRESETS[self.eps_end_idx][1]
+        cfg.activation = ACTIVATION_PRESETS[self.activation_idx][1]
+        cfg.spiegel_lernen = self.spiegel_on
+        cfg.balance_anteil = BALANCE_PRESETS[self.balance_idx][1]
+        cfg.reward_death = REWARD_DEATH_PRESETS[self.reward_death_idx][1]
+        cfg.reward_step = REWARD_STEP_PRESETS[self.reward_step_idx][1]
+        cfg.pfad_fokus_bonus = PFADFOKUS_BONUS_PRESETS[self.pfadfokus_bonus_idx][1]
         cfg.curriculum_anteil = CURRICULUM_PRESETS[self.curriculum_idx][1]
         cfg.pfad_fokus = PFADFOKUS_PRESETS[self.pfadfokus_idx][1]
         cfg.curriculum_mitwachsend = self.curriculum_mitwachsend_on
@@ -494,9 +598,20 @@ class DQNDashboard:
                      Palette.TEXT_DIM, cx, 96)
 
         entries = self._menu_entries()
-        px, pw, row_h, gap, y0 = 330, 700, 42, 8, 130
-        for i, (label, value, _kind) in enumerate(entries):
-            y = y0 + i * (row_h + gap)
+        # Scroll-Position gegen die AKTUELLE Eintrags-Anzahl absichern (kann
+        # sich aendern, z.B. wenn "Champion weitertrainieren" verschwindet).
+        self._menu_scroll_folgen(len(entries))
+        px, pw, row_h, gap, y0 = 330, 700, MENU_ROW_H, MENU_GAP, MENU_Y0
+
+        # Nur das sichtbare Fenster zeichnen (MENU_ZEILEN_SICHTBAR Zeilen ab
+        # menu_scroll) -- mit mehr Reglern als Bildschirmplatz (seit den
+        # AUSBAUPLAN-Schaltern) passt sonst nicht mehr alles ins Fenster, und
+        # ohne Scrollen waeren die unteren Zeilen unsichtbar, aber trotzdem
+        # per Enter ausloesbar gewesen (verwirrend, siehe Lucas Rueckmeldung).
+        sichtbar = entries[self.menu_scroll:self.menu_scroll + MENU_ZEILEN_SICHTBAR]
+        for local_i, (label, value, _kind) in enumerate(sichtbar):
+            i = self.menu_scroll + local_i
+            y = y0 + local_i * (row_h + gap)
             selected = (i == self.menu_row)
             rect = pygame.Rect(px, y, pw, row_h)
             if value is None:
@@ -517,10 +632,16 @@ class DQNDashboard:
                 vs = self.f_body.render(value, vc)
                 self.screen.blit(vs, vs.get_rect(midright=(px + pw - 20, rect.centery)))
 
-        y = y0 + len(entries) * (row_h + gap) + 12
+        # Scroll-Hinweise: dezente Pfeile, wenn oben/unten noch was verdeckt ist.
+        if self.menu_scroll > 0:
+            self._center(self.f_small, "▲ mehr oben", Palette.ACCENT, cx, y0 - 16)
+        if self.menu_scroll + MENU_ZEILEN_SICHTBAR < len(entries):
+            y_unten = y0 + len(sichtbar) * (row_h + gap) + 4
+            self._center(self.f_small, "▼ mehr unten", Palette.ACCENT, cx, y_unten)
+
+        y = y0 + MENU_ZEILEN_SICHTBAR * (row_h + gap) + 20
         if self.menu_error:
             self._center(self.f_small, self.menu_error, Palette.ACCENT_WARN, cx, y)
-            y += 24
         self._center(self.f_tiny,
                      "Feineinstellungen (Belohnungen, Puffergröße, Batch, Verhungern-Limit): "
                      "ai/dqn/config.py", Palette.TEXT_DIM, cx, WIN_H - 46)
