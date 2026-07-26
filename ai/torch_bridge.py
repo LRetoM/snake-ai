@@ -272,6 +272,19 @@ class SnakeConvNet(nn.Module):
             prev = k
         self.convs = nn.ModuleList(convs)
         self.pool = nn.AdaptiveAvgPool2d((self.pool_groesse, self.pool_groesse))
+        # Auffuellung, damit rows/cols GLATT durch pool teilbar sind.
+        # Grund ist ein PyTorch-Limit: adaptives Pooling laeuft auf der
+        # Apple-Grafik (MPS) NUR bei glatter Teilung -- 15x17 auf 6x6 wirft
+        # sonst "input sizes must be divisible by output sizes"
+        # (pytorch/pytorch#96056). Mit Auffuellung auf 18x18 ist die Teilung
+        # exakt und dasselbe Netz laeuft auf CPU wie auf der Grafikkarte --
+        # dort gemessen rund 2.5x schneller (siehe TRAININGSPLAN Runde 9).
+        # Bewusst IMMER aufgefuellt, nicht nur auf MPS: sonst wuerden
+        # dieselben Gewichte je nach Geraet leicht andere Zahlen liefern
+        # (ein auf der Grafikkarte trainierter Champion saehe beim Zuschauen
+        # auf der CPU anders aus). Kostet auf der CPU ~2% (gemessen).
+        self.pad_h = (-self.rows) % self.pool_groesse
+        self.pad_w = (-self.cols) % self.pool_groesse
         flach = prev * self.pool_groesse * self.pool_groesse
         # Nur die FC-Schichten werden noisy (Rainbow-Standard) -- Rauschen in
         # den Conv-Filtern braeuchte viel mehr Parameter und bringt wenig.
@@ -289,6 +302,8 @@ class SnakeConvNet(nn.Module):
         h = brett
         for conv in self.convs:
             h = self._act_fn(conv(h))
+        if self.pad_h or self.pad_w:
+            h = nn.functional.pad(h, (0, self.pad_w, 0, self.pad_h))
         h = self.pool(h).flatten(1)
         h = self._act_fn(self.fc(torch.cat([h, skalare], dim=1)))
         je_aktion = max(1, self.quantile)

@@ -89,15 +89,30 @@ def _baue_netz(cfg, input_size: int):
                     dueling=dueling, noisy=noisy, quantile=quantile)
 
 
-def pick_device() -> torch.device:
-    """CUDA-Grafikkarte, falls vorhanden -- sonst CPU.
+def pick_device(cfg=None) -> torch.device:
+    """CUDA-Grafikkarte, falls vorhanden -- sonst MPS beim CNN, sonst CPU.
 
-    MPS (Apple-Grafik) lassen wir bewusst weg: unser Netz ist winzig, und der
-    Weg zur Grafikkarte und zurueck kostet mehr Zeit, als er einspart. Bei
-    11 Eingaengen ist die CPU schlicht schneller.
+    Die Groesse des Netzes entscheidet, ob sich die Grafikkarte lohnt, und die
+    beiden Faelle liegen bei uns weit auseinander (gemessen 2026-07-26 auf M4,
+    Batch 256, Nachtlauf-Konfiguration -- siehe TRAININGSPLAN Runde 9):
+
+      MLP (rich_grid9, 120 Eingaenge):  CPU 1.05 ms  |  MPS 3.31 ms  -> CPU
+      CNN (cnn_board, ganzes Brett):    CPU 40.7 ms  |  MPS 16.0 ms  -> MPS
+
+    Beim MLP frisst der Weg zur Grafikkarte und zurueck mehr, als die Rechnung
+    selbst kostet -- deshalb bleibt es dort (wie bisher) bei der CPU. Beim CNN
+    ist es umgekehrt: echte Bild-Faltungen sind genau die Rechenart, fuer die
+    Grafikkarten gebaut sind, und der Transfer faellt daneben kaum ins Gewicht
+    (2.5x schneller inklusive Transfer, komplett gemessen).
+
+    Ohne `cfg` (z.B. aus watch_ai) bleibt es bei der CPU: das Zuschauen
+    rechnet einzelne Zuege, da lohnt die Grafikkarte nie.
     """
     if torch.cuda.is_available():
         return torch.device("cuda")
+    if (cfg is not None and getattr(cfg, "network", "mlp") == "cnn"
+            and torch.backends.mps.is_available()):
+        return torch.device("mps")
     return torch.device("cpu")
 
 
@@ -144,7 +159,7 @@ class DQNAgent:
     def __init__(self, cfg, input_size: int, seed: int | None = None) -> None:
         self.cfg = cfg
         self.input_size = input_size
-        self.device = pick_device()
+        self.device = pick_device(cfg)
         self.rng = np.random.default_rng(seed)
 
         # Wie viele CPU-Threads soll PyTorch benutzen? Das ist der mit Abstand
@@ -152,7 +167,12 @@ class DQNAgent:
         # unterschiedlich: mal ist 1 Thread am schnellsten (kleine Netze, die
         # Abstimmung zwischen Threads kostet mehr als sie bringt), mal 4.
         # Deshalb wird es bei torch_threads=0 einmalig GEMESSEN statt geraten.
-        if cfg.torch_threads:
+        # Auf einer Grafikkarte (CUDA/MPS) entfaellt das: dort rechnen keine
+        # CPU-Threads, die Messung wuerde nur Startzeit kosten und die
+        # gefundene Zahl nichts bewirken.
+        if self.device.type != "cpu":
+            pass
+        elif cfg.torch_threads:
             torch.set_num_threads(int(cfg.torch_threads))
         else:
             self.threads = tune_threads(input_size, cfg.hidden, cfg.batch_size)
@@ -362,7 +382,12 @@ class DQNAgent:
         """
         os.makedirs(os.path.dirname(path), exist_ok=True)
         payload = {
-            "state_dict": self.policy_net.state_dict(),
+            # Bewusst auf die CPU kopiert: sonst traegt die Datei das
+            # Trainings-Geraet in sich (z.B. "mps") und laesst sich auf einem
+            # Rechner ohne dieses Geraet nur noch mit map_location oeffnen.
+            # So bleibt jeder Champion ueberall lesbar (Mac, Windows-PC).
+            "state_dict": {k: v.detach().cpu()
+                           for k, v in self.policy_net.state_dict().items()},
             "hidden": tuple(self.cfg.hidden),
             # Ohne diese Angaben wuesste ein Zuschau-Programm spaeter nicht,
             # mit welcher Wahrnehmung/Aktivierung das Netz gefuettert werden

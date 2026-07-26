@@ -357,6 +357,68 @@ plateaut er wieder wie in jedem kurzen Testlauf, weil "das Tagebuch
   bei 698 Ticks/s) und "Mehrtägig (5 Mio Ticks)" fuer noch laengere Laeufe.
   Kein Code sonst veraendert -- reine Config-Wahl je nach Budget.
 
+### Runde 9 (2026-07-26) — Grafikkarte fuers CNN + Auswertung des 10h-Laufs
+
+**Auswertung `logs/dqn-20260725-235101.csv`** (CNN-Nachtlauf, 10.36 h,
+758.077 Ticks, 20.3 Ticks/s, hart abgebrochen -> kein Report, CSV direkt
+ausgewertet). Gegenueberstellung mit dem MLP-Lauf `dqn-20260725-220440`
+(rich_grid9, 29 Min, dieselben Architektur-Schalter):
+
+| | CNN nach 10 h | MLP nach 29 Min |
+|---|---|---|
+| beste Pruefung | 127.5 | 177.5 |
+| Ø bester Einzelwert je Pruefung | 216.9 | 227.2 |
+| Ø SCHLECHTESTER Einzelwert je Pruefung | **1.8** | **92.9** |
+| Pruefungen mit mind. einer Null-Partie | 39 % | 0 % |
+
+Kernbefund: die SPITZE ist bei beiden praktisch gleich (217 vs. 227) -- das
+CNN kann also durchaus gut spielen. Es ist die ZUVERLAESSIGKEIT, die fehlt:
+in 39 % der Pruefungen stirbt mindestens eine Partie mit NULL Punkten,
+obwohl 10 Fruechte auf dem Brett liegen. Der Mittelwert wird also nicht von
+einer schwachen Obergrenze gedrueckt, sondern von Totalausfaellen.
+
+**Wahrscheinliche Ursache (Code-Befund, noch nicht gemessen)**: "cnn_board"
+ist ABSOLUT ausgerichtet -- das Brettbild liegt immer in Bildschirmlage, die
+Blickrichtung kommt nur als 4er-One-hot dazu (ai/perception.py:591). Alle
+rich_grid*-Wahrnehmungen sind dagegen EGOZENTRISCH gedreht ("vorne" ist
+immer oben, perception.py:275/289). Folge: beim MLP gilt eine gelernte
+Lektion ("Wand voraus") sofort fuer alle vier Blickrichtungen, beim CNN muss
+sie viermal getrennt gelernt werden. Die jeweils am wenigsten geuebte
+Richtung bleibt schwach -- was genau zu vereinzelten Sofort-Toden passt.
+Kandidat fuer den naechsten Umbau: Brettbild egozentrisch drehen (dafuer auf
+Quadrat auffuellen, damit die Form konstant bleibt), Richtungs-One-hot faellt
+dann weg.
+
+**Umgesetzt: Apple-Grafikkarte (MPS) fuers CNN.**
+- `pick_device(cfg)` (ai/dqn/agent.py) waehlt jetzt geraeteabhaengig.
+  GEMESSEN auf M4, Batch 256, Nachtlauf-Konfiguration:
+  MLP 120 Eingaenge -> CPU 1.05 ms / MPS 3.31 ms (CPU gewinnt klar, bleibt),
+  CNN ganzes Brett -> CPU 40.7 ms / MPS 16.0 ms (MPS gewinnt klar).
+  Der alte Kommentar "MPS lohnt sich nie" stimmte also fuers MLP und wurde
+  nur fuers CNN aufgehoben, nicht pauschal.
+- Dafuer noetig: PyTorch kann adaptives Pooling auf MPS nur bei GLATTER
+  Teilung (pytorch#96056) -- 15x17 auf 6x6 warf einen harten Fehler.
+  `SnakeConvNet.forward` fuellt das Conv-Ergebnis jetzt auf ein Vielfaches
+  der Pool-Groesse auf (15x17 -> 18x18). Bewusst IMMER, nicht nur auf MPS:
+  sonst lieferten dieselben Gewichte je nach Geraet andere Zahlen. Kostet
+  auf der CPU ~2 % (41.23 -> 41.99 ms, gemessen).
+- Checkpoints werden jetzt CPU-seitig gespeichert (`.detach().cpu()`), sonst
+  traegt die .pt-Datei das Trainingsgeraet in sich und laesst sich auf einem
+  Rechner ohne MPS (Lucas Windows-PC) nicht mehr ohne map_location oeffnen.
+- Thread-Messung (`tune_threads`) entfaellt auf Grafikkarten -- sie wuerde
+  nur Startzeit kosten und nichts bewirken.
+- Abnahme (alles gemessen, kein Training lief parallel): echter Trainer mit
+  Nachtlauf-Konfiguration **20.3 -> 52.3 Ticks/s (2.6x)**; MLP unveraendert
+  auf CPU (284 Ticks/s); CPU- und MPS-Netz liefern mit denselben Gewichten
+  identische Ergebnisse (groesste Abweichung 1.02e-08, gleiche Aktionen);
+  Speichern/Laden/Weitertrainieren/watch_ai geprueft.
+
+**Ablation, wo die Rechenzeit im Lernschritt hingeht** (CPU, Batch 256):
+QR-Verteilungslernen, Noisy und Dueling kosten zusammen nur ~10 % -- der
+Rest ist die Faltung selbst. Batch 256->64 bringt 2.8x, Kanaele (16,32)->
+(8,16) bringt 1.5x, Pool 6->4 fast nichts. Zum Vergleich dieselbe
+Konfiguration als MLP: 14.5x schneller als das CNN.
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,
