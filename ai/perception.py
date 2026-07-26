@@ -282,8 +282,23 @@ def perceive_rich(game: SnakeGame) -> np.ndarray:
 #
 # Groesser = mehr Vorwarnzeit vor entfernteren Spiralen, aber mehr Eingaenge
 # (window**2 zusaetzliche Werte) -> groesseres Netz, langsameres Training.
-# Deshalb mehrere Groessen registriert (5/7/9) statt nur einer festen Wahl --
-# das laesst sich im Menue/config.py direkt gegeneinander austesten.
+# Deshalb mehrere Groessen registriert (5/7/9/13/15/17) statt nur einer
+# festen Wahl -- das laesst sich im Menue/config.py direkt gegeneinander
+# austesten.
+#
+# Die GROSSEN Fenster (13/15/17, ergaenzt 2026-07-26) sind die Antwort auf
+# einen konkreten Messbefund: beide Versuche, der KI das ganze Brett zu
+# zeigen, sind gescheitert -- "full_board" kam nach 52 Min nur auf Pruefung
+# 20.45, "cnn_board" nach 10 h auf 127.5, waehrend "rich_grid9" in 29 Min
+# 177.5 schaffte (TRAININGSPLAN Runde 9). Beide gescheiterten Varianten sind
+# ABSOLUT ausgerichtet: dieselbe Lektion muss dort fuer jede der vier
+# Blickrichtungen getrennt gelernt werden, und Spiegeln funktioniert nicht.
+# Ein groesseres rich_grid-Fenster liefert dieselbe weite Sicht, bleibt aber
+# EGOZENTRISCH (mitgedreht) und damit spiegelbar -- die weite Sicht ohne den
+# Nachteil, der die anderen beiden gekostet hat. Bei 17x15 deckt Fenster 15
+# schon 225 der 255 Zellen ab, Fenster 17 praktisch alles, was vom Kopf aus
+# ueberhaupt erreichbar ist. Wieder rein passiv: KEIN Flood-Fill, KEINE
+# "wie viel Platz habe ich noch"-Kennzahl (siehe Leitplanke oben).
 
 def _local_grid(game: SnakeGame, window: int) -> list[float]:
     """window x window Zellen um den Kopf, egozentrisch (vorne = oben).
@@ -447,7 +462,7 @@ PERCEPTIONS = {
     "simple": (perceive, INPUT_SIZE, FEATURE_LABELS),
     "rich": (perceive_rich, RICH_INPUT_SIZE, RICH_FEATURE_LABELS),
 }
-for _window in (5, 7, 9):
+for _window in (5, 7, 9, 13, 15, 17):
     PERCEPTIONS[f"rich_grid{_window}"] = make_rich_grid_perception(_window)
 del _window
 
@@ -530,7 +545,7 @@ def _build_mirror_maps() -> dict[str, tuple[np.ndarray, np.ndarray]]:
         "simple": (simple_perm, simple_sign),
         "rich": (rich_perm, rich_sign),
     }
-    for window in (5, 7, 9):
+    for window in (5, 7, 9, 13, 15, 17):
         grid_perm = np.concatenate([rich_perm, RICH_INPUT_SIZE + _grid_mirror_local(window)])
         grid_sign = np.concatenate([rich_sign, np.ones(window * window, dtype=np.float32)])
         maps[f"rich_grid{window}"] = (grid_perm, grid_sign)

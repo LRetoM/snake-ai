@@ -629,7 +629,22 @@ class MultiGameTrainer:
             return basis
         deckel = cfg.grid_cols * cfg.grid_rows - 10
         sieg_nah = min(deckel, int(self.eval_best_run) + cfg.curriculum_sieg_abstand)
-        return tuple(sorted(set(basis) | {sieg_nah}))
+        schwellen = set(basis) | {sieg_nah}
+
+        # ZWEITE Sieg-Schwelle an der ECHTEN Endphase (2026-07-26). Befund aus
+        # der Vollauswertung: der Rekord liegt bei Score 245 = Laenge 248 --
+        # nur 7 Zellen vom Sieg entfernt. Die Schwelle oben haengt aber am
+        # MITTELWERT (177 -> uebt ab Laenge 197); die entscheidenden letzten
+        # ~50 Zellen, an denen es tatsaechlich scheitert, wurden also noch nie
+        # geuebt. self.eval_max ist der beste EINZELWERT dieses Laufs; +3, weil
+        # eine Partie bei Laenge 3 startet (Score 245 -> Laenge 248). Der
+        # Abstand nach unten macht die Stellung zuverlaessig wieder
+        # erreichbar, statt exakt auf dem einmaligen Rekord zu sitzen.
+        beste_laenge = self.eval_max + 3
+        sieg_tief = beste_laenge - cfg.curriculum_sieg_abstand
+        if sieg_tief > sieg_nah:
+            schwellen.add(min(deckel, sieg_tief))
+        return tuple(sorted(schwellen))
 
     def _reset_or_curriculum(self, i: int, game: SnakeGame) -> None:
         """Setzt ein TRAININGS-Spiel zurueck -- mit `curriculum_anteil`

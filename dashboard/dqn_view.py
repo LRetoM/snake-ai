@@ -86,6 +86,11 @@ PERCEPTION_PRESETS = [
     ("Reich + Nahbereich 5×5 (64 Werte)", "rich_grid5"),
     ("Reich + Nahbereich 7×7 (88 Werte)", "rich_grid7"),
     ("Reich + Nahbereich 9×9 (120 Werte)", "rich_grid9"),
+    # Grosse egozentrische Fenster (2026-07-26): weite Sicht wie beim vollen
+    # Feld, aber MITGEDREHT und spiegelbar -- siehe ai/perception.py.
+    ("Reich + Weitsicht 13×13 (208 Werte)", "rich_grid13"),
+    ("Reich + Weitsicht 15×15 (264 Werte)", "rich_grid15"),
+    ("Reich + Weitsicht 17×17 (328 Werte)", "rich_grid17"),
     ("Volles Feld (411 Werte)", "full_board"),
     ("Einfach (11 Werte)", "simple"),
     # AUSBAUPLAN Phase D: ganzes Brett als Bild fuers Faltungs-Netz --

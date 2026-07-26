@@ -419,6 +419,92 @@ Rest ist die Faltung selbst. Batch 256->64 bringt 2.8x, Kanaele (16,32)->
 (8,16) bringt 1.5x, Pool 6->4 fast nichts. Zum Vergleich dieselbe
 Konfiguration als MLP: 14.5x schneller als das CNN.
 
+### Runde 10 (2026-07-26) — Vollauswertung 182 Laeufe + grosse egozentrische Fenster
+
+**Vollauswertung ALLER 182 auswertbaren Reports** (Skript wertet
+`*-report.json` + zugehoerige `*-config.json` aus):
+
+| Wahrnehmung | Laeufe >=8 Min | bester | Ø | Ø Minuten |
+|---|---|---|---|---|
+| rich_grid9 | 149 | **177.50** | 116.89 | 10.6 |
+| rich_grid7 | 9 | 133.40 | 86.39 | 14.0 |
+| rich_grid5 | 4 | 127.85 | 109.92 | 10.0 |
+| rich | 4 | 124.50 | 106.55 | 10.0 |
+| full_board | 1 | 20.45 | 20.45 | 51.7 |
+| cnn_board | 1 | 5.40 | 5.40 | 8.8 |
+
+- **Sieg in 182 Laeufen: 0.** Bestaetigt Runde 7 mit voller Datenbasis.
+- Todesursache bei den 6 besten Laeufen im Eimer 90+: 65-82 % Selbst-
+  kollision, 18-34 % Wand. Das Endspiel-Einsperren ist unveraendert DAS
+  Thema.
+- Architektur-Schalter auf rich_grid9: nur 1 Lauf >=8 Min mit
+  Dueling+Noisy+QR -- und der ist mit 177.50 der Bestwert ueberhaupt (bester
+  Lauf ohne die drei: 152.45). n=1, also kein Beweis, aber der einzige
+  Datenpunkt zeigt in die richtige Richtung.
+
+**Profil des echten Trainers** (Bestkonfiguration, cProfile ueber 400 Ticks):
+Lernschritt 80 % der Gesamtzeit (davon Rueckwaertsdurchlauf 25 %,
+Vorwaertsdurchlaeufe 22 %, Adam 8 %, Rauschen 6 %), Wahrnehmung 10 %,
+Aktionswahl 5 %.
+
+**Zwei Optimierungen GEMESSEN und VERWORFEN** (damit sie niemand erneut
+versucht): Adam mit `foreach=True` 1.02x, die zwei Policy-Durchlaeufe
+(s und s2) zu einem doppelten Batch zusammengefasst 0.99x, beides zusammen
+1.01x. Der Lernschritt haengt an echter Rechenarbeit, nicht an Verwaltungs-
+Aufwand -- hier ist nichts zu holen.
+
+**NEU: grosse egozentrische Fenster `rich_grid13/15/17`.**
+Auslöser ist der Widerspruch in der Tabelle oben: beide Wahrnehmungen mit
+weiter Sicht (full_board, cnn_board) sind katastrophal gescheitert,
+ausgerechnet das kleine 9x9-Fenster gewinnt. Der Unterschied ist nicht die
+Menge an Information, sondern die AUSRICHTUNG -- full_board und cnn_board
+sind absolut ausgerichtet (jede Lektion muss fuer 4 Blickrichtungen getrennt
+gelernt werden, Spiegeln unmoeglich), alle rich_grid* sind egozentrisch
+mitgedreht. `make_rich_grid_perception(window)` war ohnehin voll
+parametrisiert -- es waren schlicht nur 5/7/9 registriert.
+- Registriert in `PERCEPTIONS` und `_build_mirror_maps` (ai/perception.py),
+  Menue-Eintraege in dqn_view.py ergaenzt.
+- Groessen: grid13 = 208, grid15 = 264, grid17 = 328 Eingaenge. Zum
+  Vergleich: full_board hat 266 -- grid15 sieht also praktisch gleich viel,
+  nur eben mitgedreht und spiegelbar.
+- Abnahme: alle Groessen korrekt registriert (Groesse = 39 + window^2 =
+  Label-Anzahl), Spiegelung fuer alle vorhanden und korrekt (zweimal
+  spiegeln ergibt das Original, einmal spiegeln veraendert wirklich),
+  Menue schaltet sauber durch, echter Trainer laeuft.
+- Tempo-Preis (echter Trainer, 400 Ticks, Bestkonfiguration):
+  grid9 194 Ticks/s (1.00x), grid13 170 (0.87x), grid15 166 (0.85x),
+  grid17 154 (0.79x). Also nur ~15 % fuer grid15 -- verglichen mit dem CNN
+  (10x langsamer) praktisch geschenkt.
+- Erster Kurztest grid15 (90 s): Pruefung 83.8, bester Einzelscore 112.
+
+**NEU: zweite Sieg-Schwelle an der ECHTEN Endphase.**
+Der wichtigste Einzelbefund der Vollauswertung: der Rekord ueber alle 182
+Laeufe ist Score **245 = Laenge 248 -- nur 7 Zellen vom Sieg entfernt**. Die
+zehn hoechsten Einzelpartien (228-245) stammen ALLE aus einem einzigen Lauf
+(`dqn-20260725-220440`, rich_grid9 + Dueling/Noisy/QR, Pruefung 177.5) --
+und dieser Lauf dauerte nur 29 Minuten und wurde dann beendet.
+- Die Luecke: `curriculum_sieg_fokus` haengt am MITTELWERT
+  (`eval_best_run + 20`), bei Ø177 also Laenge 197. Die letzten ~50 Zellen,
+  an denen es tatsaechlich scheitert, wurden damit NIE geuebt.
+- `_curriculum_schwellen()` sichert jetzt zusaetzlich eine Stellung knapp
+  unter der besten je erreichten Laenge (`self.eval_max + 3 -
+  curriculum_sieg_abstand`), gedeckelt wie bisher bei `cols*rows - 10`.
+  Bewusst mit Abstand nach unten, damit die Stellung zuverlaessig wieder
+  erreichbar ist, statt exakt auf einem einmaligen Rekord zu sitzen.
+- Abnahme (Schwellen bei verschiedenen Lauf-Staenden):
+  Ø0/max0 -> (20,40,50,60) · Ø120/max180 -> (40,50,60,140,163) ·
+  Ø177/max245 -> (40,50,60,197,**228**) · Ø240/max252 -> (40,50,60,245),
+  Deckel greift korrekt; `curriculum_sieg_fokus=False` ergibt exakt das alte
+  (40,50,60); Kombination mit `curriculum_mitwachsend` korrekt
+  ((88,115,141,197,228)). Beim Weitertrainieren wird `eval_max` aus den
+  Champion-Metadaten wiederhergestellt, die tiefe Schwelle greift also
+  sofort.
+- Offen (bewusst NICHT mitgeaendert, um nicht mehrere Dinge gleichzeitig zu
+  drehen): der Vorrat wird GLEICHVERTEILT gezogen und enthaelt viel mehr
+  kurze (40/50/60) als tiefe Stellungen -- eine laengengewichtete Ziehung
+  waere der naechste Schritt, falls die tiefe Schwelle allein zu selten
+  drankommt.
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,
