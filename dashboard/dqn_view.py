@@ -139,6 +139,12 @@ ACTIVATION_PRESETS = [("ReLU", "relu"), ("Tanh", "tanh")]
 # Neugier mit der Zeit gegen 0 schrumpft -- siehe config.py noisy_sigma_min_frac.
 NOISY_BODEN_PRESETS = [("Unbegrenzt (Standard)", 0.0), ("Niedrig (10%)", 0.1),
                        ("Mittel (20%)", 0.2), ("Hoch (35%)", 0.35)]
+# Tagebuch-Groesse (2026-07-26): groesser haelt seltene lange/nahe-am-Sieg-
+# Partien laenger im Umlauf, bevor sie ueberschrieben werden -- kostet nur
+# RAM, KEINE Rechenzeit (Ziehen ist O(1) unabhaengig von der Groesse, siehe
+# memory.py-Fix vom Vortag). Bei rich_grid13 (208 Werte) ~1.7 GB je Mio.
+BUFFER_PRESETS = [("Normal (1 Mio)", 1_000_000), ("Groß (2 Mio)", 2_000_000),
+                  ("Sehr groß (5 Mio)", 5_000_000)]
 REWARD_DEATH_PRESETS = [("Mild (-10)", -10.0), ("Hart (-20)", -20.0)]
 REWARD_STEP_PRESETS = [("Zeitstrafe (-0.01)", -0.01), ("Keine (0.0)", 0.0)]
 FRUIT_OPTIONS = list(range(1, 11))
@@ -298,6 +304,8 @@ class DQNDashboard:
             CURRICULUM_PRESETS, getattr(cfg, "curriculum_anteil", 0.0), 2)
         self.pfadfokus_idx = _preset_index(
             PFADFOKUS_PRESETS, getattr(cfg, "pfad_fokus", 0.0), 0)
+        self.buffer_idx = _preset_index(
+            BUFFER_PRESETS, getattr(cfg, "buffer_size", 1_000_000), 0)
         # Architektur-Schalter (AUSBAUPLAN.md B/C/E) -- einfache An/Aus-Toggles.
         self.dueling_on = getattr(cfg, "dueling", False)
         self.noisy_on = getattr(cfg, "noisy", False)
@@ -346,6 +354,7 @@ class DQNDashboard:
             ("Lerntakt", TRAIN_EVERY_PRESETS[self.train_every_idx][0], "train_every"),
             ("Aktivierung", ACTIVATION_PRESETS[self.activation_idx][0], "activation"),
             ("Tagebuch priorisieren", "An" if self.per_on else "Aus", "per"),
+            ("Tagebuch-Größe", BUFFER_PRESETS[self.buffer_idx][0], "buffer"),
             ("Symmetrie-Spiegeln", "An" if self.spiegel_on else "Aus", "spiegel"),
             ("Längen-Balance", BALANCE_PRESETS[self.balance_idx][0], "balance"),
             ("Todesstrafe", REWARD_DEATH_PRESETS[self.reward_death_idx][0], "reward_death"),
@@ -432,6 +441,8 @@ class DQNDashboard:
             self.nstep_idx = (self.nstep_idx + delta) % len(NSTEP_PRESETS)
         elif kind == "per":
             self.per_on = not self.per_on
+        elif kind == "buffer":
+            self.buffer_idx = (self.buffer_idx + delta) % len(BUFFER_PRESETS)
         elif kind == "batch":
             self.batch_idx = (self.batch_idx + delta) % len(BATCH_PRESETS)
         elif kind == "target_update":
@@ -531,6 +542,7 @@ class DQNDashboard:
         cfg.gamma = GAMMA_PRESETS[self.gamma_idx][1]
         cfg.n_step = NSTEP_PRESETS[self.nstep_idx][1]
         cfg.prioritized = self.per_on
+        cfg.buffer_size = BUFFER_PRESETS[self.buffer_idx][1]
         cfg.fruit_count = FRUIT_OPTIONS[self.fruit_idx]
         cfg.batch_size = BATCH_PRESETS[self.batch_idx][1]
         cfg.target_update = TARGET_UPDATE_PRESETS[self.target_update_idx][1]
