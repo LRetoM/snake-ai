@@ -98,6 +98,15 @@ class DQNConfig:
     # Zufallszug toetet mehr eine lange Partie. Pruefungen sind automatisch
     # rauschfrei (eval-Modus rechnet nur mit den Mittelwerten).
     noisy: bool = False
+    # Rausch-Boden (2026-07-26): verhindert, dass Noisy Nets sein eigenes
+    # Rauschen ("sigma") mit der Zeit gegen 0 lernt -- gemessen im Champion
+    # nach 8200 Episoden war |sigma| bereits auf ~25% des Startwerts
+    # geschrumpft, die Erkundung liess also messbar nach (aehnliches Problem
+    # wie das alte feste eps_decay_steps, nur diesmal selbst gewaehlt statt
+    # nach Zeitplan). 0.0 = unbegrenzt (altes Verhalten); z.B. 0.1 haelt
+    # |sigma| mindestens bei 10% des Startwerts, egal wie sicher sich das
+    # Netz fuehlt. Wirkt nur, wenn noisy=True.
+    noisy_sigma_min_frac: float = 0.0
     # Verteilungs-Lernen QR-DQN (Phase E): das Netz lernt je Aktion
     # `quantile_anzahl` Stuetzstellen der ERGEBNIS-VERTEILUNG statt nur den
     # Mittelwert -- wichtig, wo derselbe Zug mal +50 und mal Tod bedeutet.

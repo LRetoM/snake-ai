@@ -41,7 +41,7 @@ class NoisyLinear(nn.Module):
     """
 
     def __init__(self, in_features: int, out_features: int,
-                 sigma_init: float = 0.5) -> None:
+                 sigma_init: float = 0.5, sigma_min_frac: float = 0.0) -> None:
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -56,6 +56,20 @@ class NoisyLinear(nn.Module):
             torch.full((out_features,), sigma_init * bound))
         self.register_buffer("weight_eps", torch.zeros(out_features, in_features))
         self.register_buffer("bias_eps", torch.zeros(out_features))
+        # Rausch-BODEN (2026-07-26, Lucas Beobachtung "Neugier muss erhalten
+        # bleiben"): sigma ist ein frei lernbarer Parameter -- nichts hindert
+        # das Netz daran, es Richtung 0 zu druecken, sobald es sich in einer
+        # Situation sicher fuehlt. Gemessen im Champion nach 8200 Episoden:
+        # mittleres |sigma| auf ~25% des Startwerts geschrumpft (0.0085 statt
+        # 0.0347 in der ersten Schicht) -- die Erkundung laesst also wirklich
+        # nach, genau wie beim alten Epsilon-Problem, nur diesmal selbst
+        # gewaehlt statt per Zeitplan. sigma_min_frac=0 (Default) heisst
+        # weiterhin unbegrenzt, wie bisher -- nur wenn explizit gesetzt, kann
+        # |sigma| nicht mehr unter sigma_min_frac * Startwert fallen. Das
+        # Vorzeichen von sigma ist fuer die Rauschverteilung bedeutungslos
+        # (eps ist symmetrisch um 0) -- deshalb wird unten mit abs() gerechnet,
+        # das aendert die Verteilung nicht, macht den Boden aber eindeutig.
+        self._sigma_floor = float(sigma_min_frac) * sigma_init * bound
         self.resample_noise()
 
     @staticmethod
@@ -71,16 +85,22 @@ class NoisyLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            w = self.weight_mu + self.weight_sigma * self.weight_eps
-            b = self.bias_mu + self.bias_sigma * self.bias_eps
+            w_sigma = self.weight_sigma.abs()
+            b_sigma = self.bias_sigma.abs()
+            if self._sigma_floor > 0:
+                w_sigma = w_sigma.clamp(min=self._sigma_floor)
+                b_sigma = b_sigma.clamp(min=self._sigma_floor)
+            w = self.weight_mu + w_sigma * self.weight_eps
+            b = self.bias_mu + b_sigma * self.bias_eps
         else:
             w, b = self.weight_mu, self.bias_mu   # eval = rauschfrei
         return nn.functional.linear(x, w, b)
 
 
-def _linear(noisy: bool, in_f: int, out_f: int) -> nn.Module:
+def _linear(noisy: bool, in_f: int, out_f: int, sigma_min_frac: float = 0.0) -> nn.Module:
     """Baut Linear oder NoisyLinear -- je nach Noisy-Nets-Schalter."""
-    return NoisyLinear(in_f, out_f) if noisy else nn.Linear(in_f, out_f)
+    return (NoisyLinear(in_f, out_f, sigma_min_frac=sigma_min_frac)
+            if noisy else nn.Linear(in_f, out_f))
 
 
 class SnakeNet(nn.Module):
@@ -119,7 +139,7 @@ class SnakeNet(nn.Module):
     def __init__(self, hidden: tuple[int, ...] = DEFAULT_HIDDEN,
                  input_size: int = INPUT_SIZE, activation: str = "tanh",
                  dueling: bool = False, noisy: bool = False,
-                 quantile: int = 0) -> None:
+                 quantile: int = 0, noisy_sigma_min_frac: float = 0.0) -> None:
         super().__init__()
         self.hidden = tuple(hidden)
         self.input_size = int(input_size)
@@ -130,21 +150,22 @@ class SnakeNet(nn.Module):
         self.dueling = bool(dueling)
         self.noisy = bool(noisy)
         self.quantile = int(quantile)
+        smf = float(noisy_sigma_min_frac)
 
         layers = []
         prev = self.input_size
         for h in hidden:
-            layers.append(_linear(self.noisy, prev, h))
+            layers.append(_linear(self.noisy, prev, h, smf))
             prev = h
         self.hidden_layers = nn.ModuleList(layers)
 
         # Kopf: je Aktion 1 Wert (klassisch) oder `quantile` Stuetzstellen.
         je_aktion = max(1, self.quantile)
         if self.dueling:
-            self.value_head = _linear(self.noisy, prev, je_aktion)
-            self.adv_head = _linear(self.noisy, prev, OUTPUT_SIZE * je_aktion)
+            self.value_head = _linear(self.noisy, prev, je_aktion, smf)
+            self.adv_head = _linear(self.noisy, prev, OUTPUT_SIZE * je_aktion, smf)
         else:
-            self.out = _linear(self.noisy, prev, OUTPUT_SIZE * je_aktion)
+            self.out = _linear(self.noisy, prev, OUTPUT_SIZE * je_aktion, smf)
 
     def _features(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.hidden_layers:
@@ -250,7 +271,8 @@ class SnakeConvNet(nn.Module):
     def __init__(self, cols: int, rows: int, skalare: int = 6,
                  activation: str = "relu", dueling: bool = False,
                  noisy: bool = False, quantile: int = 0,
-                 kanaele: tuple[int, ...] = (16, 32), pool: int = 6) -> None:
+                 kanaele: tuple[int, ...] = (16, 32), pool: int = 6,
+                 noisy_sigma_min_frac: float = 0.0) -> None:
         super().__init__()
         self.cols, self.rows = int(cols), int(rows)
         self.skalare = int(skalare)
@@ -288,13 +310,14 @@ class SnakeConvNet(nn.Module):
         flach = prev * self.pool_groesse * self.pool_groesse
         # Nur die FC-Schichten werden noisy (Rainbow-Standard) -- Rauschen in
         # den Conv-Filtern braeuchte viel mehr Parameter und bringt wenig.
-        self.fc = _linear(self.noisy, flach + self.skalare, 256)
+        smf = float(noisy_sigma_min_frac)
+        self.fc = _linear(self.noisy, flach + self.skalare, 256, smf)
         je_aktion = max(1, self.quantile)
         if self.dueling:
-            self.value_head = _linear(self.noisy, 256, je_aktion)
-            self.adv_head = _linear(self.noisy, 256, OUTPUT_SIZE * je_aktion)
+            self.value_head = _linear(self.noisy, 256, je_aktion, smf)
+            self.adv_head = _linear(self.noisy, 256, OUTPUT_SIZE * je_aktion, smf)
         else:
-            self.out = _linear(self.noisy, 256, OUTPUT_SIZE * je_aktion)
+            self.out = _linear(self.noisy, 256, OUTPUT_SIZE * je_aktion, smf)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         skalare = x[:, :self.skalare]

@@ -505,6 +505,44 @@ und dieser Lauf dauerte nur 29 Minuten und wurde dann beendet.
   waere der naechste Schritt, falls die tiefe Schwelle allein zu selten
   drankommt.
 
+**Nachtrag (selber Tag): rich_grid13 schlaegt den Champion nach 18 Min real.**
+Lucas eigener Lauf (rich_grid13, frisches Netz, sonst identische Bestkombi)
+erreichte Pruefung 199.35 / Rekord 247 von 252 -- Champion-Datei automatisch
+ueberschrieben (alter Wert 177.5). Widerspricht meiner vorsichtigen A/B-
+Einschaetzung von eben (4 Min/Seed reichten nicht, um zwischen grid9/13/15
+zu unterscheiden) NICHT: laengere Laufzeit zeigt, was der kurze Test nicht
+zeigen konnte. Bestaetigt trotzdem die Methode -- ein 4-Minuten-A/B ist bei
+dieser Streuung zu kurz, ein 18-Minuten-Alleinlauf ist es auch noch (kein
+zweiter Seed), aber die Richtung (groessere egozentrische Fenster helfen)
+ist jetzt durch echte Daten gestuetzt, nicht nur Theorie.
+
+**NEU: Rausch-Boden gegen Noisy-Net-Kollaps.** Lucas Beobachtung beim
+Beobachten des Laufs: die Pruefung stieg schnell auf ~199 (Minute 7), dann
+11 Minuten Plateau/Pendeln zwischen 148-199 trotz weiterem Training --
+gleichzeitig kroch der MAX-Wert (230->243) trotzdem noch langsam weiter.
+Nachgemessen im Champion-Checkpoint (8200 Episoden): mittleres |sigma| in
+der ersten Schicht bei 0.0085 -- der Realwert 4x kleiner als der
+Startwert (0.5 * bound = 0.0347). Noisy Nets kann sein eigenes Rauschen frei
+Richtung 0 lernen, nichts hindert es daran -- ein Analogon zum alten
+eps_decay_steps-Problem, nur diesmal selbst gewaehlt statt nach Zeitplan.
+- `NoisyLinear` (ai/torch_bridge.py) hat jetzt `sigma_min_frac`: haelt
+  |sigma| (Vorzeichen ist wegen der Symmetrie von eps bedeutungslos, daher
+  Rechnung mit abs()) mindestens bei `sigma_min_frac * Startwert`, egal wie
+  stark Gradienten druecken. Durchgereicht durch `_linear`/SnakeNet/
+  SnakeConvNet/`_baue_netz`, neues Config-Feld `noisy_sigma_min_frac`
+  (Default 0.0 = unbegrenzt, altes Verhalten exakt erhalten), Menue-Zeile
+  "Noisy-Rausch-Boden" mit Presets Unbegrenzt/10%/20%/35%.
+- Der Boden liegt NICHT im state_dict (reiner Laufzeit-Clamp aus einem
+  Python-Float, kein Parameter/Buffer) -- braucht deshalb KEINEN
+  Kompatibilitaets-Check beim Laden, ein Champion kann mit einem anderen
+  Boden-Wert weitertrainiert werden als er gespeichert wurde.
+- Abnahme: mit `sigma_min_frac=0.0` ist ein frisches Netz bei gleichem Seed
+  BITWEISE identisch zum alten Code (Rueckwaerts-Kompatibilitaet bewiesen,
+  nicht nur behauptet). Unter hartem Gradientendruck (2000 Adam-Schritte,
+  lr=0.05) faellt |sigma| ohne Boden auf 0.000001, mit `sigma_min_frac=0.2`
+  bleibt es zuverlaessig bei 0.01414 (= 20% des Startwerts). Echter Trainer
+  mit Boden=0.2 laeuft, Speichern/Laden geprueft, Menue schaltet sauber durch.
+
 ### Runde 1 (Brett-Infrastruktur + ReLU)
 - **S0.1-S0.5**: Neue Defaults `grid_cols=17, grid_rows=15`; `full_board`
   brettgrößen-dynamisch (`make_full_board_perception`, `get_perception(name,

@@ -135,6 +135,10 @@ EPS_END_PRESETS = [("Niedrig (0.02)", 0.02), ("Hoch (0.05)", 0.05)]
 PFADFOKUS_BONUS_PRESETS = [("Gering (0.02)", 0.02), ("Normal (0.05)", 0.05), ("Stark (0.1)", 0.1)]
 BALANCE_PRESETS = [("Aus", 0.0), ("Normal (30%)", 0.3), ("Hoch (50%)", 0.5)]
 ACTIVATION_PRESETS = [("ReLU", "relu"), ("Tanh", "tanh")]
+# Rausch-Boden fuer Noisy Nets (2026-07-26): verhindert, dass die gelernte
+# Neugier mit der Zeit gegen 0 schrumpft -- siehe config.py noisy_sigma_min_frac.
+NOISY_BODEN_PRESETS = [("Unbegrenzt (Standard)", 0.0), ("Niedrig (10%)", 0.1),
+                       ("Mittel (20%)", 0.2), ("Hoch (35%)", 0.35)]
 REWARD_DEATH_PRESETS = [("Mild (-10)", -10.0), ("Hart (-20)", -20.0)]
 REWARD_STEP_PRESETS = [("Zeitstrafe (-0.01)", -0.01), ("Keine (0.0)", 0.0)]
 FRUIT_OPTIONS = list(range(1, 11))
@@ -297,6 +301,8 @@ class DQNDashboard:
         # Architektur-Schalter (AUSBAUPLAN.md B/C/E) -- einfache An/Aus-Toggles.
         self.dueling_on = getattr(cfg, "dueling", False)
         self.noisy_on = getattr(cfg, "noisy", False)
+        self.noisy_boden_idx = _preset_index(
+            NOISY_BODEN_PRESETS, getattr(cfg, "noisy_sigma_min_frac", 0.0), 0)
         self.distributional_on = getattr(cfg, "distributional", False)
         self.curriculum_mitwachsend_on = getattr(cfg, "curriculum_mitwachsend", False)
         self.sieg_fokus_on = getattr(cfg, "curriculum_sieg_fokus", True)
@@ -357,6 +363,8 @@ class DQNDashboard:
              PFADFOKUS_BONUS_PRESETS[self.pfadfokus_bonus_idx][0], "pfadfokus_bonus"),
             ("Dueling-Kopf", "An" if self.dueling_on else "Aus", "dueling"),
             ("Noisy Nets (statt Epsilon)", "An" if self.noisy_on else "Aus", "noisy"),
+            ("Noisy-Rausch-Boden (gegen Neugier-Kollaps)",
+             NOISY_BODEN_PRESETS[self.noisy_boden_idx][0], "noisy_boden"),
             ("Verteilungs-Lernen (QR)", "An" if self.distributional_on else "Aus", "distributional"),
             ("Gespeicherten Champion weitertrainieren", champ, "cont"),
             ("NEUES TRAINING STARTEN", None, "start"),
@@ -458,6 +466,8 @@ class DQNDashboard:
             self.dueling_on = not self.dueling_on
         elif kind == "noisy":
             self.noisy_on = not self.noisy_on
+        elif kind == "noisy_boden":
+            self.noisy_boden_idx = (self.noisy_boden_idx + delta) % len(NOISY_BODEN_PRESETS)
         elif kind == "distributional":
             self.distributional_on = not self.distributional_on
         elif kind == "cont":
@@ -538,6 +548,7 @@ class DQNDashboard:
         cfg.curriculum_sieg_fokus = self.sieg_fokus_on
         cfg.dueling = self.dueling_on
         cfg.noisy = self.noisy_on
+        cfg.noisy_sigma_min_frac = NOISY_BODEN_PRESETS[self.noisy_boden_idx][1]
         cfg.distributional = self.distributional_on
         # CNN-Wahrnehmung und CNN-Netz gehoeren zwingend zusammen (siehe
         # MultiGameTrainer.__init__) -- das Menue koppelt das automatisch,

@@ -79,13 +79,16 @@ def _baue_netz(cfg, input_size: int):
     dueling = getattr(cfg, "dueling", False)
     noisy = getattr(cfg, "noisy", False)
     activation = getattr(cfg, "activation", "tanh")
+    sigma_min_frac = getattr(cfg, "noisy_sigma_min_frac", 0.0)
     if getattr(cfg, "network", "mlp") == "cnn":
         return SnakeConvNet(cfg.grid_cols, cfg.grid_rows,
                             activation=activation, dueling=dueling,
                             noisy=noisy, quantile=quantile,
                             kanaele=tuple(getattr(cfg, "cnn_kanaele", (16, 32))),
-                            pool=getattr(cfg, "cnn_pool", 6))
+                            pool=getattr(cfg, "cnn_pool", 6),
+                            noisy_sigma_min_frac=sigma_min_frac)
     return SnakeNet(cfg.hidden, input_size, activation,
+                    noisy_sigma_min_frac=sigma_min_frac,
                     dueling=dueling, noisy=noisy, quantile=quantile)
 
 
